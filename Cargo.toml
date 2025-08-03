@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [ 
+    "lib",
+    "cli",
+    "examples/*/viewers/*",
+    # "examples/**"
+]
+
+exclude = [
+    "examples/cubes/services/rapier",
+    "examples/cubes/behaviors/setup",
+    "examples/cubes/viewers/bevy"
+]

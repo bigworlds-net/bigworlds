@@ -1,0 +1,32 @@
+[[behaviors]]
+# Name of the behavior. We can use this name to reference the behavior at
+# runtime, for example to instantiate it.
+name = "behavior"
+
+# Type of behavior. In our case it's a rust crate compiled to an `.so` dynamic
+# library. 
+type = "rust"
+
+# Path to behavior's directory. We should set this if we defined our behavior
+# anywhere else than in the behavior's top level directory. For example this
+# behavior could've just as well been declared in the entry `model.toml` file,
+# which would necessitate setting the path to `./behavior`.
+# path = "./"
+
+# Debug flag. For the rust flavor setting this to true simply means we will be
+# building with `cargo` without a `--release` flag, so with all the default
+# debug info and symbols.
+debug = false
+ 
+# Optional entry for overriding path to a shared lib artifact.
+# lib = "target/release/libbehavior.so"
+
+# Name of the entry function. This is what will be called when the behavior
+# logic is invoked.
+# entry = "global"
+entry = "global_synced"
+
+# Flag for specifying the specific behavior interface used. 
+synced = true
+
+# targets = { worker = "all" }

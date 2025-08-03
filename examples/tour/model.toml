@@ -1,0 +1,101 @@
+# This is a model manifest. It's always named `model.toml` and indicates the
+# root of the model file structure.
+#
+# Otherwise this file follows the same rules as any model file. It defines 
+# structured data that can be read and transformed into a runnable
+# representation of a simulation model.
+
+# We start with the model declaration. It contains meta information about the
+# model itself.
+[model]
+# Name of the model, snake_case by convention.
+name = "tour"
+# Short description of the model.
+description = "Quick tour of the available functionality."
+# Author information.
+authors = ["Adam Wierchoła <adam@wierchola.com>"]
+# Version of the model. 
+# version = "0.1.0"
+# Version of the bigworlds engine required by this model.
+# engine = "^0.1.0"
+
+# Directories and files to be included in the model. This entry allows us to
+# selectively include some parts and by ommision exclude other parts of the
+# model. 
+# 
+# This way we don't have to include every file in the model's structure
+# by default. 
+include = [
+  # Include a model file containing component definitions. Note that this file
+  # includes further files, building up the model structure recursively.
+  "components/included.toml",
+  # Since model files are not included by default, we can easily exclude parts
+  # of the model by not mentioning them.
+  # "components/excluded.toml"
+  # We could also choose to outright include all files.
+  # "*"
+]
+
+# Scenario target declaration. Scenarios provide a convenient way for defining
+# variants over the base model with regards to the starting state of the world.
+[[scenarios]]
+# Name of the scenario.
+name = "case_1"
+
+[scenarios.data]
+# Basic data entry. Scenario declarations can include any number of such
+# entries. It contains a data address and a value we wish to override it with.
+# Here we set the value of integer foo on the config entity to 42.
+"config.int.foo" = 42
+# Wildcard data entry, wildcard being the variable name. 
+"config.str.*" = { bar = "hello", baz = "world" }
+# Wildcard data entry, wildcards being the entity name and the variable name.
+"*.str.*" = { "config,bar" = "hello", "other_config,baz" = "world" }
+# Wildcard data entry with path to external file.
+"file_config.str.*" = "data/strings.csv"
+
+# Behavior declaration. 
+[[behaviors]]
+# Type of the behavior, in this case a bigworlds script. In most cases we can
+# skip specifying the behavior type as it will be determined based on the 
+# provided path.
+type = "script"
+# We provide a path to a bigworlds script. For a tour of bigworlds scripting
+# see the script file.
+path = "behaviors/script.bw"
+
+# Instantiation targets for above-defined behavior. We can specify multiple
+# targets such as workers, components, entities and even variables. The engine
+# will manage instancing the behaviors for nodes that fulfil the target
+# requirements. Let's say our behavior provides some agent-like behavior for 
+# entities with the `agent` component. In other words we want an instance of
+# this behavior running for each entity with said component attached.
+[[behaviors.target]]
+# Compose the target from components array. Target is fulfilled for entities
+# with all the specified components attached.
+components = ["agent"]
+
+# Another behavior declaration. We can have define multiple behaviors per
+# model.
+[[behaviors]]
+# Here we define a behavior provided as a rust library.
+type = "rust"
+# Path to the behavior package. Rust behaviors must be valid Cargo projects
+# producing a dynamic library.
+path = "behaviors/rust"
+# Let's run a single instance of this behavior on each worker. 
+targets = { worker = ["all"] }
+
+[[behaviors]]
+# Here we define a WASM behavior. The `type` definition is commented out to
+# showcase automatic path-based detection.
+# type = "wasm"
+# Path to the the .wasm file. In this case it's inside a C# project included
+# within the model repository.
+path = "behaviors/csharp/target/out.wasm"
+# We want this behavior running only on entities with multiple specific
+# components present.
+targets = { components = ["comp_1", "comp_2"] }
+
+# [[components]]
+

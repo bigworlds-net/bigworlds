@@ -1,0 +1,18 @@
+[package]
+name = "setup"
+version = "0.1.0"
+edition = "2024"
+
+# [workspace]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["dylib"]
+
+[dependencies]
+bigworlds = { path = "../../../../lib" }
+futures = "0.3.31"
+tokio = "1"
+tokio-util = "0.7.13"
+tokio-stream = { version = "0.1", features = ["sync"] }
+uuid = "1.11.0"

@@ -1,0 +1,13 @@
+[package]
+name = "cubes-tui-viewer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bigworlds = { path = "../../../../lib" }
+
+tokio = { version = "1", features = ["full"] }
+crossterm = { version = "0.28.1", features = ["use-dev-tty"] }
+fastrand = "2.3.0"
+ratatui = "0.29.0"
+anyhow = "1.0.98"

@@ -1,0 +1,27 @@
+[model]
+name = "boids"
+version = "0.1.0"
+engine = "*"
+include = [
+  # "behavior/behavior.toml"
+]
+
+[[prefabs]]
+name = "boid"
+components = ["physical", "spatial"]
+
+[[components]]
+name = "physical"
+
+[components.vars]
+"int.stamina" = 100
+"int.health" = 100
+
+[[components]]
+name = "spatial"
+
+[components.vars]
+"vec2.position" = [100.0, 100.0]
+"vec2.velocity" = [1.0, 1.0]
+"float.rotation" = 100.0
+

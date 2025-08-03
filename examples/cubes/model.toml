@@ -1,0 +1,41 @@
+[model]
+name = "cubes"
+version = "0.1.0"
+engine = "*"
+include = [
+  "behaviors/setup/behavior.toml"
+]
+
+[[scenarios]]
+name = "tower"
+
+[[scenarios]]
+name = "wall"
+
+[[prefabs]]
+name = "cube"
+components = ["position", "rotation"]
+
+[[components]]
+name = "position"
+
+[components.vars]
+"float.x" = 0.0
+"float.y" = 0.0
+"float.z" = 0.0
+
+[[components]]
+name = "rotation"
+
+[components.vars]
+"float.x" = 0.0
+"float.y" = 0.0
+"float.z" = 0.0
+"float.w" = 0.0
+
+[[components]]
+name = "debug"
+
+[components.vars]
+"str:worker" = "unknown"
+

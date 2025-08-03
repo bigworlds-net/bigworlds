@@ -1,0 +1,274 @@
+# Welcome to a quick tour of the bigworlds scripting.
+#
+#
+# The bigworlds scripting system, often called the
+# `machine`, is an addition on top of the core engine
+# functionality.
+#
+# It's a specialized runtime capable of fulfilling
+# a variety of roles, from simple debugging to creation of
+# elaborate behavior models.
+#
+#
+# Whole scripting system is organized around the idea of
+# a discrete command.
+#
+# Everything written inside a `.bw` script file will be
+# eventually parsed into a sequence of commands.
+#
+# Commands look like this:
+# `[tag] command [arguments]`
+#
+# Here's an example of a printing command that takes some
+# text as it's argument:
+
+print "Hello world!"
+
+# As you might have already noticed, comments are denoted
+# with '#'. Any characters after the '#' will be ignored
+# by the parser. This also applies to comments made after
+# valid commands but still on the same line.
+#
+#
+# We can write loops and break out of them. A basic `loop`
+# command requires us to manually break out of it, or face
+# "infinite consequences" otherwise.
+
+loop
+	# If we removed this break we would get what's known as
+	# an "infinite loop", meaning it would block execution
+	# forever!
+	break
+end
+
+# Another example of a loop is a `while` loop. It allows us
+# to explicitly define a break condition for our loop.
+#
+# It performs it's condition check each time a single loop
+# cycle is finished. If it evaluates to true, next cycle
+# is executed. If it evaluates to false, we break out of
+# the loop and continue on to further commands.
+
+# TODO
+#while int:value < 10
+while true
+	print "This should only print a few times"
+
+	# Here we evaluate an expression provided inside the
+	# quotes. `eval` command has a few tricks up it's
+	# sleeve. One of them is variable substitution.
+	# We increment our integer by one and output the new
+	# value back.
+	eval "x + 1" x=int:value --out int:value
+end
+
+# The ability to define procedures is key to well organized
+# scripts. It allows us to save time and space.
+proc do_work
+	print "doing work..."
+end
+
+# A `for` call is another case of a loop, but this one is
+# less unwieldy. We only need to specify the low and high
+# ends of a range and we will get this many iterations of
+# the loop.
+# for int:value in 0..10
+#     call do_work
+# end
+
+
+# Including external libraries in our scripts is the key to
+# spicying our simulations up.
+#
+
+# Same is true for calling libraries from inside our
+# scripts.
+#
+# Let's try with an example. The `tour` module provides
+# a `rust_library` subdirectory. `rust_library` is a
+# complete Rust language package. As such it can be
+# compiled down to WASM and then called directly from
+# our scripts.
+
+# call rust_library.get_monster_health \
+#	--in monster_id --out entity.component.value.int 
+
+# At this time, compiling your external libraries and
+# services to WASM is something you'll need to handle
+# yourself. You may get some help there from bigworlds CLI
+# but only when working with the Rust programming language.
+#
+# Similar to calling into WASM libraries, bigworlds engine
+# will also gladly handle arbitrary long-running WASM
+# programs.
+#
+# We call those long-running programs "services", and treat
+# them as part of the simulation model for our worlds.
+#
+# Services are nothing more than clients inspecting and
+# mutating a world. They can exist at different scopes and
+# be attached to component types. What does this mean
+# exactly?
+#
+# For example we may want to apply some physics logic to
+# the monsters roaming our tour world. This is a
+# computation-heavy task that doesn't mix well with simple
+# scripting.
+#
+# At the same time, distributed computation model, with
+# entities potentially dispersed among multiple physical
+# host machines, encourages local processing wherever
+# possible.
+# 
+# We shall in this case provide a physics service handled
+# at the worker scope, meaning there will be an actual
+# instance of our service program running for each worker.
+# If need be, this can be further narrowed down to workers 
+# handling entities with particular components attached.
+# 
+# In any case, our movement service is a specialized program
+# concerned with the movement of our monsters. As such it
+# will query for entities having the `movement` component
+# attached to them, and perform some logic based on that.
+
+
+component color
+	var str:fur_color
+end
+
+component position
+	var float:x = 0
+	var float:y = 0
+end
+
+# Once attached to an entity, a `monster` component defines it as creature
+# with certain `health` and `strength`.
+component monster
+	var int:health = 100
+	var int:strength = 100
+end
+
+prefab blue_monster -c monster,position,color --set str:fur_color=blue
+prefab regular_monster -c monster,position
+
+# Let's provide some behavior for our monsters.
+#
+# `machine` command denotes a state machine construct that is to be
+# operated for each entity that fulfills the component requirements. 
+#
+# Component requirements are defined by the `--components` (`-c`) argument.
+# Only entities that have a combination of the required components attached
+# become eligible for running certain machines.
+# 
+# `machine` is the simplest way to define entity behavior from the bigworlds
+# script level. 
+#
+
+machine -c monster,position
+	trigger step
+
+	# initial state simply randomizes position of the monster on the world plane
+	state init
+		set position:float:x = 0
+		set position:float:y = 0
+		# call monster_lib.random_position -o position:float:x,position:float:y
+		goto move
+	end
+
+	# search for somewhere to move to
+	state find
+		# set float2_list:nearby_monsters
+		# look for other monsters nearby
+		query -c monster,position --filter position:float:x={position:float:x} \ 
+			--out nearby_monsters
+	end
+
+	# 
+	state move
+		
+	end
+end
+
+# Note that `machine` itself does not hold any state. When we do
+#
+# ```
+# set position:float:x = 0
+# ```
+#
+# we are setting the variable `position:float:x` on the particular entity 
+# connected with the particular `machine` instance. So in this case the full
+# address could be something like `monster_1:position:float:x`. 
+
+# If we don't specify any `state` command within `machine` scope, we will end
+# up with a more vanilla `machine`, one that always gets it's whole body
+# executed.
+
+machine
+	# requires monster,position
+	trigger step
+
+	# find all the monster entities, get their position values
+	query -components monster,position \
+		--map position:x,position:y \
+		--out nearby_monsters
+
+	# find the closest monster
+	set int:closest_monster = 1000
+	for (addr, value) in nearby_monsters
+		if addr == "*:position:x"
+			if value < position:x
+				set int:closest_monster = value
+			end
+		end
+	end
+
+	# move slightly towards the closest monster
+	eval "(closest_monster - position:x) / 100" -o delta
+	eval "position:x + delta" -o position:x
+end
+
+# The built-in processing with `machine`s is great for
+# simple state machine logic. For more complex behavior
+# it's usually a good idea to go beyond it.
+#
+# `service` serves as the more versatile behavior
+# construct that's able to execute arbitrary logic on
+# either local or remote entities.
+#
+# `service`s are not bound to entities like `machine`s are.
+# This puts them at a different level when it comes to
+# proximity to entity data.
+#
+# You can think of `machine` as a part of an actor managing
+# it's own state, and of `service` as an external force
+# inspecting and mutating different parts of the
+# simulation.
+#
+# `service`s are written using bigworlds client API. 
+#
+# Let's bring in a service that enables similar behavior
+# to the `machine` we wrote before.
+
+service -c monster,position services/monsters.wasm
+
+# Using the `service` command we created what we call
+# a *managed* service. This means the engine takes care of
+# deploying it on relevant workers which are tasked with 
+# processing entities containing the required components we
+# defined.
+#
+# An *unmanaged* service would be any program based on the
+# bigworlds client API that would connect to the cluster
+# from the outside. With this kind of service it can be 
+# easier to write a more monolithic logic structure that
+# processes all entities from accross the simulation.
+# We have to pay the performance cost of operating further
+# away from the entity data though.
+#
+# For managed services only WASM programs are supported.
+#
+# Unmanaged services can be written in pretty much any
+# programming language.
+#
+# You can find the source for an example unmanaged service
+# project at `services/monsters/`.

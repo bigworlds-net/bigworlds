@@ -1,0 +1,70 @@
+[package]
+name = "bigworlds-cli"
+version = "0.1.1"
+authors = ["Adam Wierchoła <adam@wierchola.com>"]
+edition = "2021"
+repository = "https://github.com/bigworlds-net/bigworlds"
+description = "Dynamically scalable virtual worlds inside your terminal."
+readme = "README.md"
+license = "AGPL-3.0-only"
+default-run = "bigworlds"
+
+[[bin]]
+name = "bigworlds"
+path = "src/main.rs"
+
+[features]
+archive = ["bigworlds/archive"]
+
+msgpack = ["bigworlds/msgpack_encoding"]
+
+[dependencies]
+bigworlds = { path = "../lib", features = ["ws_transport"] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"]}
+tokio-stream = "0.1"
+tokio-util = { version = "0.7" }
+reqwest = { version = "0.11", features = ["json"] }
+uuid = "1"
+url = "2"
+time = "0.3"
+hostname = "0.3"
+
+anyhow = "1"
+log = "0.4"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry", "smallvec"] }
+tracing-log = "0.1"
+tracing-loki = "0.2"
+yansi = "0.5"
+
+serde = "1"
+serde_json = "1"
+toml = "0.5"
+fnv = "1"
+
+clap = "4"
+rpassword = "7"
+directories = "4"
+
+linefeed = "0.6"
+colored = "2"
+ansi_term = "0.12"
+
+tar = "0.4"
+bytes = "1"
+walkdir = "2"
+vfs = "0.9"
+
+ctrlc = { version = "3", features = ["termination"] }
+notify = { version = "5" }
+psutil = { version = "3", default-features = false, features = ["process"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
+
+# additional optimizations for smaller binary size
+#[profile.release]
+#strip = true  # automatically strip symbols from the binary.
+#lto = true # enable link-time optimnizations
+#codegen-units = 1
+#panic = "abort"

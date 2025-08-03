@@ -1,0 +1,7 @@
+[package]
+name = "tcp-client"
+version = "0.1.0"
+authors = ["Adam Wierchoła <adam@wierchola.com>"]
+edition = "2021"
+
+[dependencies]
