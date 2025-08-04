@@ -4,20 +4,14 @@ extern crate getopts;
 use std::collections::{BTreeMap, HashMap};
 use std::process::Command as ProcessCommand;
 
-// use evalexpr::eval;
 use fasteval::{Compiler, Evaler};
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress};
 use crate::{string, CompName, Float, StringId, Var, VarType};
 
-// use serde_yaml::Value;
-// use shlex::split;
-//
 use self::getopts::Options;
 
-// use crate::component::Component;
 use crate::entity::{Entity, Storage};
-// use crate::error::Error;
 use crate::model::Model;
 
 use super::super::{CommandPrototype, Error, LocationInfo, Registry, RegistryTarget, Result};
@@ -28,7 +22,7 @@ use std::str::FromStr;
 /// Precompiles an evaluation and stores it
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Eval {
-    pub expr: fasteval::Instruction,
+    pub expr: String,
     // pub slab: fasteval::Slab,
     pub args: Vec<(StringId, Address)>,
     // pub arg0: Option<(ShortString, RegistryTarget)>,
@@ -45,21 +39,13 @@ impl Eval {
         println!("eval matches {:?}", matches);
 
         let mut slab = fasteval::Slab::new();
-        let parser = fasteval::Parser::new();
 
         // let mut expr = matches.free[0];
         // for input in matches.opt_strs("in") {
 
         //     expr.replacen("", , count)
         // }
-
         // expr.replace(from, to)
-
-        let compiled = parser
-            .parse(&matches.free[0], &mut slab.ps)
-            .unwrap()
-            .from(&slab.ps)
-            .compile(&slab.ps, &mut slab.cs);
 
         // let mut out = None;
         let out = matches
@@ -79,7 +65,7 @@ impl Eval {
         }
 
         Ok(Self {
-            expr: compiled,
+            expr: matches.free[0].to_owned(),
             args: eval_args,
             out,
         })
@@ -88,13 +74,11 @@ impl Eval {
     pub async fn execute(
         &self,
         machine: &Machine,
-        // comp_name: &CompName,
         registry: &mut Registry,
         location: &LocationInfo,
     ) -> CommandResult {
         let mut slab = fasteval::Slab::new();
         let mut ns = fasteval::StringToF64Namespace::new();
-        // let mut map = BTreeMap::new();
         for (arg_name, arg_addr) in &self.args {
             let val = match machine.get_var(arg_addr.clone()).await {
                 Ok(v) => v.to_float(),
@@ -105,12 +89,18 @@ impl Eval {
                     ));
                 }
             };
-            // println!("position:x value: {}", xval);
             ns.insert(arg_name.to_string(), val as f64);
         }
 
+        let parser = fasteval::Parser::new();
+        let compiled = parser
+            .parse(&self.expr, &mut slab.ps)
+            .unwrap()
+            .from(&slab.ps)
+            .compile(&slab.ps, &mut slab.cs);
+
         // let val = fasteval::ez_eval(&self.expr, &mut ns).unwrap();
-        let val = self.expr.eval(&slab, &mut ns).unwrap();
+        let val = compiled.eval(&slab, &mut ns).unwrap();
         // let val = fasteval::eval_compiled!(self.expr, &self.slab, &mut ns);
 
         if let Some(out_addr) = &self.out {
@@ -132,6 +122,7 @@ impl Eval {
         CommandResult::Continue
     }
 }
+
 // #[derive(Debug, Clone, Serialize, Deserialize)]
 // pub struct EvalReg {
 //     pub expr: String,
