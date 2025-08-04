@@ -2,13 +2,10 @@ use std::net::SocketAddr;
 
 use axum::extract::ws::WebSocket;
 use axum::extract::{ConnectInfo, Path, WebSocketUpgrade};
-use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{any, get, post};
+use axum::routing::{any, get};
 use axum::{Extension, Form, Json, Router};
 use fnv::FnvHashMap;
-use tokio::sync::oneshot::Sender;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
@@ -25,7 +22,7 @@ pub struct HttpServerHandler {}
 pub fn spawn(
     listener_addr: CompositeAddress,
     interface: Interface,
-    mut cancel: CancellationToken,
+    cancel: CancellationToken,
 ) -> Result<HttpServerHandler> {
     let sock_addr = if let crate::net::Address::Net(addr) = listener_addr.address {
         addr
@@ -59,7 +56,7 @@ pub fn spawn(
 async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Extension(mut interface): InterfaceExt,
+    Extension(interface): InterfaceExt,
 ) -> axum::response::Response {
     ws.on_upgrade(move |socket| handle_socket(socket, addr, interface))
 }
@@ -117,7 +114,7 @@ async fn get_entities(
 async fn world_query(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path((entity, component, var)): Path<(String, String, String)>,
-    Extension(mut interface): InterfaceExt,
+    Extension(interface): InterfaceExt,
 ) -> Result<impl IntoResponse> {
     let query = Query::default()
         .description(query::Description::Addressed)
@@ -148,7 +145,7 @@ struct ClientInfo {
 
 async fn register_client(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Extension(mut interface): InterfaceExt,
+    Extension(interface): InterfaceExt,
     Form(credentials): Form<ClientInfo>,
 ) -> Result<impl IntoResponse> {
     debug!("http: registering client");
@@ -170,7 +167,7 @@ async fn register_client(
 
 async fn status(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Extension(mut interface): InterfaceExt,
+    Extension(interface): InterfaceExt,
 ) -> Result<impl IntoResponse> {
     debug!("http: handling status");
     let result = interface

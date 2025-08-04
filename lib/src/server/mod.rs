@@ -1,29 +1,17 @@
-use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
-use std::fs::File;
-use std::io::{ErrorKind, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use fnv::FnvHashMap;
-use futures::future::join_all;
-use futures::stream::FuturesUnordered;
-use futures::FutureExt;
 use id_pool::IdPool;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::{oneshot, watch, Mutex};
-use tokio_stream::wrappers::WatchStream;
-use tokio_stream::{StreamExt, StreamMap};
+use tokio::sync::mpsc::{self};
+use tokio::sync::{watch, Mutex};
+use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::executor::{self, Executor, ExecutorMulti, LocalExec, RemoteExec, Signal};
-use crate::net::{framed_tcp, ConnectionOrAddress};
+use crate::executor::{self, Executor, ExecutorMulti, LocalExec, Signal};
+use crate::net::ConnectionOrAddress;
 use crate::net::{CompositeAddress, Encoding, Transport};
 use crate::rpc::msg::{self, DataPullRequest, Message, PullRequestData};
 use crate::rpc::server::{RequestLocal, Response};
@@ -32,13 +20,8 @@ use crate::service::Service;
 use crate::time::Instant;
 use crate::util_net::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId};
-use crate::{
-    model, net, rpc, string, worker, Address, EntityName, Error, EventName, Model, Query,
-    QueryProduct, Relay, Result, StringId, VarType,
-};
+use crate::{net, rpc, string, worker, Address, Error, EventName, Query, Result};
 
-mod pull;
-mod query;
 mod turn;
 
 mod handlers;
