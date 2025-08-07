@@ -1,14 +1,12 @@
-use tracing::{info, info_span, Span};
+use tracing::Span;
 use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
-use uuid::Uuid;
 use yansi::Paint;
 
 use anyhow::Result;
-use url::Url;
 
 pub const LOKI_ADDRESS: &str = "http://127.0.0.1:3100";
 

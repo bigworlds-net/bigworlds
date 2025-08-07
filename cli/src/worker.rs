@@ -1,11 +1,11 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 use clap::ArgMatches;
 
 use bigworlds::{leader, net::CompositeAddress, rpc, server, worker, Executor};
 use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
-    use clap::{builder::PossibleValue, Arg, Command};
+    use clap::{Arg, Command};
 
     Command::new("worker")
         .about("Start a worker")

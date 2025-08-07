@@ -1,49 +1,29 @@
 //! Defines an interactive interface for the command line.
-//!
-//! ## Local or remote
-//!
-//! `SimDriver` enum is used to differentiate between local and remote
-//! modes. Local mode will operate directly on a `Sim` struct, while
-//! remote mode will use a `Client` connected to an `bigworlds` server.
-//! `Client` interface from the `bigworlds-net` crate is used.
 
 mod compl;
 pub mod config;
-// mod local;
-// mod remote;
 
 mod img_print;
 
-use std::io::Write;
+use std::io;
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
-use std::{fs, io, thread};
 
 use anyhow::Result;
 use linefeed::inputrc::parse_text;
 use linefeed::Signal;
 use linefeed::{Interface, ReadResult};
-
-use bigworlds::rpc::msg::Message;
-use bigworlds::rpc::msg::{
-    DataTransferRequest, SpawnEntitiesRequest, StatusRequest, TransferResponseData,
-};
-use bigworlds::{client::r#async::AsyncClient, string};
-use bigworlds::{query, rpc, Executor};
-use bigworlds::{sim, SimHandle};
-
-use bigworlds::rpc::msg::LoadScenarioRequest;
-// use messageio_client::Client;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use self::compl::MainCompleter;
+use bigworlds::query;
+use bigworlds::{client::r#async::AsyncClient, string};
 
 use crate::interactive::config::{Config, CONFIG_FILE};
+
+use compl::MainCompleter;
 
 pub struct OnChange {
     pub trigger: Arc<Mutex<bool>>,

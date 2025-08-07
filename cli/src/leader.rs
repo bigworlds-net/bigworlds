@@ -5,7 +5,7 @@ use bigworlds::{leader, net::CompositeAddress};
 use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
-    use clap::{builder::PossibleValue, Arg, Command};
+    use clap::{Arg, Command};
 
     Command::new("leader")
         .about("Start a cluster leader")

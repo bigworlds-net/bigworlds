@@ -1,38 +1,14 @@
 //! Command-line application for running and interacting with `bigworlds`
 //! systems.
 
-use std::fs::{create_dir_all, File};
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::env;
 use std::time::Duration;
-use std::{env, thread};
 
-use anyhow::{Error, Result};
-use bytes::BufMut;
-use clap::builder::PossibleValue;
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use directories::ProjectDirs;
-use fnv::FnvHashMap;
-use notify::{RecommendedWatcher, Watcher};
-use reqwest::header::AUTHORIZATION;
-use reqwest::StatusCode;
+use anyhow::Result;
+use clap::{Arg, ArgMatches, Command};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
-use bigworlds::net;
-use bigworlds::net::{CompositeAddress, Transport};
-use bigworlds::util::get_snapshot_paths;
-use bigworlds::SimHandle;
-use bigworlds::{leader, server, worker};
-use bigworlds::{rpc, Executor};
-
-use crate::interactive;
-use crate::interactive::{OnShutdown, OnShutdownAction};
 use crate::tracing::LogLevel;
-use crate::util::format_elements_list;
 
 pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 pub const AUTHORS: &'static str = env!("CARGO_PKG_AUTHORS");
@@ -70,10 +46,10 @@ pub fn arg_matches() -> ArgMatches {
 pub async fn start(matches: ArgMatches) -> Result<()> {
     init_logging(&matches);
 
-    // Set up the mechanism for graceful shutdown
-    let mut cancel = CancellationToken::new();
-    let _cancel = cancel.clone();
+    // Set up the mechanism for graceful shutdown.
+    let cancel = CancellationToken::new();
 
+    let _cancel = cancel.clone();
     match matches.subcommand() {
         Some(("run", m)) => crate::run::start(m, _cancel).await?,
         Some(("client", m)) => crate::client::start(m, _cancel).await?,

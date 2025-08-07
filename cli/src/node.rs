@@ -6,7 +6,7 @@ use bigworlds::node::{self, NodeConfig};
 use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
-    use clap::{builder::PossibleValue, Arg, Command};
+    use clap::{Arg, Command};
 
     Command::new("node")
         .about("Start a node")
@@ -54,7 +54,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
         })
         .unwrap_or(vec![CompositeAddress::available()?]);
 
-    let mut config = NodeConfig {
+    let config = NodeConfig {
         listeners,
         ..Default::default()
     };

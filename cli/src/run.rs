@@ -7,10 +7,8 @@ use bigworlds::sim::SimConfig;
 use clap::builder::PossibleValue;
 use clap::ArgMatches;
 
-use bigworlds::rpc::msg::UploadProjectRequest;
 use bigworlds::util::{find_model_root, get_snapshot_paths};
-use bigworlds::Executor;
-use bigworlds::{rpc, ServerConfig};
+use bigworlds::ServerConfig;
 use notify::Watcher;
 use tokio_util::sync::CancellationToken;
 

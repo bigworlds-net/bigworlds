@@ -40,7 +40,6 @@ fn main() {
         .build()
         .expect("failed building tokio runtime");
 
-    let runtime_handle = runtime.handle().clone();
     runtime.block_on(async move {
         // Run the program based on user input
         match cli::start(matches).await {

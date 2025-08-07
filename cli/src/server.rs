@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{Error, Result};
+use anyhow::Result;
 use bigworlds::server;
 use clap::ArgMatches;
 

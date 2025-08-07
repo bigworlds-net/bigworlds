@@ -1,6 +1,3 @@
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
-
 use bigworlds::SimHandle;
 use linefeed::complete::{Completer, Completion};
 use linefeed::terminal::Terminal;
