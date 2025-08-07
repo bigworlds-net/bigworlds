@@ -13,6 +13,7 @@ use rkyv::de::deserializers::SharedDeserializeMap;
 use rkyv::{archived_root, from_bytes_unchecked, Archive};
 use uuid::Uuid;
 
+use crate::rpc::Participant;
 use crate::{rpc, Error, Result};
 
 /// Messaging with optional context added for tracking.
@@ -46,17 +47,40 @@ impl<T> Signal<T> {
     /// Convenience function for providing default context while also explicitly
     /// specifying signal origin.
     pub fn originating_at(mut self, caller: rpc::Caller) -> Self {
-        self.ctx = Some(rpc::Context {
-            origin: caller,
-            target: None,
-            initiated_at: chrono::Utc::now(),
-            hops: vec![],
-        });
+        match self.ctx {
+            Some(ref mut ctx) => ctx.origin = caller,
+            None => {
+                self.ctx = Some(rpc::Context {
+                    origin: caller,
+                    initiated_at: chrono::Utc::now(),
+                    ..Default::default()
+                })
+            }
+        }
+        self
+    }
+
+    pub fn with_target(mut self, target: Participant) -> Self {
+        match self.ctx {
+            Some(ref mut ctx) => ctx.target = Some(target),
+            None => {
+                self.ctx = Some(rpc::Context {
+                    target: Some(target),
+                    initiated_at: chrono::Utc::now(),
+                    ..Default::default()
+                })
+            }
+        }
         self
     }
 
     /// Returns the embedded payload discarding context.
     pub fn into_payload(self) -> T {
+        self.payload
+    }
+
+    /// Same as `into_payload` but carries the significance of discarding the context.
+    pub fn discard_context(self) -> T {
         self.payload
     }
 

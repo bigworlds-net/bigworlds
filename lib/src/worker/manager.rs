@@ -15,7 +15,7 @@ use crate::behavior::{BehaviorHandle, BehaviorTarget};
 use crate::entity::Entity;
 use crate::executor::{LocalExec, Signal};
 use crate::net::CompositeAddress;
-use crate::rpc::Caller;
+use crate::rpc::{Caller, Participant};
 use crate::server::ServerId;
 use crate::worker::part::Partition;
 use crate::worker::{Leader, LeaderSituation, Server, ServerExec, WorkerState};
@@ -546,7 +546,7 @@ async fn handle_request(req: Request, mut worker: &mut WorkerState) -> Result<Re
                     leader
                         .execute(
                             Signal::from(rpc::leader::Request::DisconnectWorker)
-                                .originating_at(Caller::Worker(worker.id)),
+                                .originating_at(Participant::Worker(worker.id).into()),
                         )
                         .await?;
                 }

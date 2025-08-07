@@ -33,7 +33,7 @@ impl WsClient {
         let msg = Message::RegisterClientRequest(msg::RegisterClientRequest {
             name: "ws_client".to_owned(),
             is_blocking: false,
-            auth_pair: None,
+            auth_token: None,
             encodings: vec![],
             transports: vec![],
         });
@@ -79,7 +79,7 @@ impl AsyncClient for WsClient {
         let msg = Message::RegisterClientRequest(msg::RegisterClientRequest {
             name: config.name.clone(),
             is_blocking: config.is_blocking,
-            auth_pair: None,
+            auth_token: None,
             encodings: vec![],
             transports: vec![],
         });

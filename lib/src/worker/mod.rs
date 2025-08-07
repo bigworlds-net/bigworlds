@@ -33,7 +33,7 @@ use crate::model::behavior::BehaviorInner;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::query::{self, process_query, Trigger};
 use crate::rpc::worker::{Request, RequestLocal, Response};
-use crate::rpc::Caller;
+use crate::rpc::{Caller, Participant};
 use crate::server::{self, ServerId};
 use crate::util::{decode, encode};
 use crate::{
@@ -265,7 +265,9 @@ impl Executor<Request, Response> for OtherWorker {
     async fn execute(&self, req: Request) -> Result<Response> {
         match &self.exec {
             WorkerExec::Remote(remote_exec) => remote_exec
-                .execute(Signal::from(req).originating_at(rpc::Caller::Worker(self.local_id)))
+                .execute(
+                    Signal::from(req).originating_at(Participant::Worker(self.local_id).into()),
+                )
                 .await?
                 // Discard the context.
                 .map(|r| r.into_payload()),
@@ -373,7 +375,7 @@ impl Handle {
     pub async fn query(&self, query: Query, caller: Option<Caller>) -> Result<QueryProduct> {
         let caller = match caller {
             Some(c) => c,
-            None => Caller::Worker(self.id().await?),
+            None => Participant::Worker(self.id().await?).into(),
         };
 
         match self
@@ -778,7 +780,7 @@ async fn handle_local_request(
                     rpc::leader::RequestLocal::ConnectAndRegisterWorker(leader_worker),
                     Some(
                         ctx.clone()
-                            .unwrap_or(rpc::Context::new(Caller::Worker(my_id))),
+                            .unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
                     ),
                 ))
                 .await??;
@@ -1014,7 +1016,7 @@ async fn handle_request(
             println!("introducing worker");
             let req = rpc::leader::Request::IntroduceWorker(my_id);
             let sig = remote_exec
-                .execute(Signal::from(req).originating_at(rpc::Caller::Worker(my_id)))
+                .execute(Signal::from(req).originating_at(Participant::Worker(my_id).into()))
                 .await??;
             println!("done introducing worker");
             trace!("worker: sent introduction: got response: {sig:?}");
@@ -1377,7 +1379,7 @@ async fn handle_request(
                         // doesn't circle back through the leader to this
                         // worker
                         ctx.hops.push(rpc::NetworkHop {
-                            observer: Caller::Worker(manager.get_id().await?),
+                            observer: Participant::Worker(manager.get_id().await?).into(),
                             delta_time: Duration::from_millis(10),
                         });
                         // went_through_workers.push(manager.get_meta().await?);
@@ -1582,7 +1584,7 @@ async fn handle_request(
             let sig = remote_exec
                 .execute(
                     Signal::from(Request::IntroduceWorker(my_id))
-                        .originating_at(Caller::Worker(my_id)),
+                        .originating_at(Participant::Worker(my_id).into()),
                 )
                 .await??;
 
@@ -1705,9 +1707,9 @@ async fn handle_request(
                                         entity_name.clone(),
                                         entity,
                                     )),
-                                    ctx.clone().or(Some(rpc::Context::new(Caller::Worker(
-                                        manager.get_id().await?,
-                                    )))),
+                                    ctx.clone().or(Some(rpc::Context::new(
+                                        Participant::Worker(manager.get_id().await?).into(),
+                                    ))),
                                 ))
                                 .await?;
                         }
@@ -1736,7 +1738,9 @@ async fn handle_request(
             }
             Ok(Signal::new(Response::Empty, ctx))
         }
-
+        Request::Authorize { token } => {
+            todo!()
+        }
         #[cfg(feature = "machine")]
         Request::MachineLogic { name } => {
             let leader = manager.get_leader().await?;
@@ -1769,7 +1773,6 @@ async fn handle_request(
                 unimplemented!()
             }
         }
-
         Request::IntroduceWorker(_) => unreachable!(),
         Request::IntroduceLeader { .. } => unreachable!(),
         Request::Election { .. } => unreachable!(),

@@ -186,7 +186,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
             Some(v) => Some(Duration::from_secs(*v)),
         },
 
-        use_auth: false,
+        require_auth: false,
         use_compression: matches.get_one::<String>("compress").is_some(),
         auth_pairs: vec![],
         transports: match matches.get_one::<String>("transports") {

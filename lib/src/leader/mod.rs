@@ -30,7 +30,7 @@ use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
 use crate::leader::manager::ManagerExec;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::rpc::leader::{Request, RequestLocal, Response};
-use crate::rpc::Caller;
+use crate::rpc::{Caller, Participant};
 use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId, WorkerRemoteExec};
 use crate::{model, net, query, rpc, string, worker, EntityId, EntityName, Model, QueryProduct};
@@ -40,8 +40,6 @@ pub type LeaderId = Uuid;
 /// Single worker as seen by the leader.
 #[derive(Clone, Debug)]
 pub struct Worker {
-    pub my_id: LeaderId,
-
     pub id: WorkerId,
 
     /// Tracked list of entities that currently exist on the worker.
@@ -55,9 +53,8 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(my_id: LeaderId, id: WorkerId, exec: WorkerExec) -> Self {
+    pub fn new(id: WorkerId, exec: WorkerExec) -> Self {
         Self {
-            my_id,
             id,
             entities: vec![],
             exec,
@@ -75,7 +72,11 @@ impl Executor<Signal<rpc::worker::Request>, Signal<rpc::worker::Response>> for W
         match &self.exec {
             WorkerExec::Remote(remote_exec) => {
                 remote_exec
-                    .execute(Signal::from(sig).originating_at(Caller::Worker(self.my_id)))
+                    .execute(
+                        Signal::from(sig)
+                            .originating_at(Participant::Leader.into())
+                            .into(),
+                    )
                     .await?
             }
             WorkerExec::Local(local_exec) => {
@@ -358,7 +359,7 @@ async fn handle_local_worker_request(
     match req {
         RequestLocal::ConnectAndRegisterWorker(executor) => {
             let worker_id = if let Some(ctx) = &ctx {
-                if let Caller::Worker(id) = ctx.origin {
+                if let Caller::Participant(Participant::Worker(id)) = ctx.origin {
                     id
                 } else {
                     return Err(Error::Other("Signal origin is not worker".to_string()));
@@ -368,7 +369,7 @@ async fn handle_local_worker_request(
             };
 
             let my_id = manager.get_meta().await?;
-            let worker = Worker::new(my_id, worker_id, WorkerExec::Local(executor));
+            let worker = Worker::new(worker_id, WorkerExec::Local(executor));
 
             // TODO: rework; we don't really need to get information about
             // other workers.
@@ -540,7 +541,6 @@ async fn handle_network_request(
                 }
             };
             let worker = Worker {
-                my_id: manager.get_meta().await?,
                 id,
                 entities: vec![],
                 exec: WorkerExec::Remote(exec),
@@ -608,7 +608,6 @@ async fn handle_request(
             trace!("leader: sent introduction: got response: {resp:?}");
 
             let worker = Worker {
-                my_id: manager.get_meta().await?,
                 id: worker_id,
                 // Worker starts out with an empty entity store.
                 entities: vec![],
@@ -736,7 +735,7 @@ async fn handle_request(
                             match worker
                                 .execute(
                                     Signal::from(rpc::worker::Request::ProcessQuery(query.clone()))
-                                        .originating_at(Caller::Leader(manager.get_meta().await?)),
+                                        .originating_at(Participant::Leader.into()),
                                 )
                                 .await?
                                 .into_payload()

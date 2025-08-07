@@ -33,7 +33,7 @@ impl Into<Message> for protoworlds::RegisterClientRequest {
         Message::RegisterClientRequest(crate::rpc::msg::RegisterClientRequest {
             name: self.name,
             is_blocking: self.is_blocking,
-            auth_pair: None,
+            auth_token: None,
             encodings: vec![],
             transports: vec![],
         })

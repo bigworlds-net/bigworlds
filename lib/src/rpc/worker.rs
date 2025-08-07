@@ -140,6 +140,10 @@ pub enum Request {
         sender_id: Uuid,
     },
 
+    Authorize {
+        token: String,
+    },
+
     #[cfg(feature = "machine")]
     MachineLogic {
         name: String,
@@ -213,6 +217,10 @@ impl Response {
             Self::Empty => Ok(()),
             _ => Err(Error::UnexpectedResponse(format!("{:?}", self))),
         }
+    }
+
+    pub fn is_ok(self) -> bool {
+        self.ok().is_ok()
     }
 }
 

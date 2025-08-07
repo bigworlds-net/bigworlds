@@ -68,7 +68,7 @@ impl AsyncClient for Client {
             .execute(Message::RegisterClientRequest(msg::RegisterClientRequest {
                 name: config.name.clone(),
                 is_blocking: config.is_blocking,
-                auth_pair: None,
+                auth_token: None,
                 encodings: vec![],
                 transports: vec![],
             }))

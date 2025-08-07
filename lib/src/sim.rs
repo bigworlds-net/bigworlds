@@ -91,7 +91,7 @@ pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<
             .execute(Message::RegisterClientRequest(RegisterClientRequest {
                 name: "sim_handle".to_string(),
                 is_blocking: false,
-                auth_pair: None,
+                auth_token: None,
                 encodings: vec![],
                 transports: vec![],
             }))

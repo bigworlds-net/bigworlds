@@ -52,9 +52,10 @@ pub struct StatusResponse {
     pub worker: String,
 }
 
-/// Requests registration of the client who's sending the message.
+/// Requests registration of the client that is sending the message.
+///
 /// This is the default first message any connecting client has to send
-/// before sending anything else.
+/// before anything else from them is accepted.
 ///
 /// If successful the client is added to the server's list of registered
 /// clients. Server will try to keep all connections with registered
@@ -69,7 +70,9 @@ pub struct StatusResponse {
 pub struct RegisterClientRequest {
     pub name: String,
     pub is_blocking: bool,
-    pub auth_pair: Option<(String, String)>,
+
+    pub auth_token: Option<String>,
+
     pub encodings: Vec<Encoding>,
     pub transports: Vec<Transport>,
 }

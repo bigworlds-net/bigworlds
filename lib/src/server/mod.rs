@@ -22,7 +22,7 @@ use crate::net::ConnectionOrAddress;
 use crate::net::{CompositeAddress, Encoding, Transport};
 use crate::rpc::msg::{self, DataPullRequest, Message, PullRequestData};
 use crate::rpc::server::{RequestLocal, Response};
-use crate::rpc::Caller;
+use crate::rpc::{Caller, Participant};
 use crate::service::Service;
 use crate::time::Instant;
 use crate::util::{decode, encode};
@@ -50,7 +50,7 @@ pub struct Client {
     pub is_blocking: bool,
     /// Watch channel for specifying blocking conditions for the client.
     /// Specifically it defines until what clock value the client is allowing
-    /// execution. `None` means
+    /// execution. `None` means the client is blocked.
     pub unblocked_until: (watch::Sender<Option<usize>>, watch::Receiver<Option<usize>>),
 
     /// Furthest simulation step client has announced it's ready to proceed to.
@@ -66,16 +66,6 @@ pub struct Client {
     pub auth_pair: Option<(String, String)>,
     /// Self-assigned name.
     pub name: String,
-
-    /// List of scheduled data transfers.
-    pub scheduled_transfers: FnvHashMap<EventName, Vec<msg::DataTransferRequest>>,
-    // /// List of scheduled queries.
-    // pub scheduled_queries: FnvHashMap<EventName, Vec<(TaskId, Query)>>,
-    /// Clock step on which client needs to be notified of step advance success.
-    pub scheduled_advance_response: Option<usize>,
-
-    pub order_store: FnvHashMap<u32, Vec<Address>>,
-    pub order_id_pool: IdPool,
 }
 
 #[derive(Clone)]
@@ -94,7 +84,7 @@ impl Executor<Signal<rpc::worker::Request>, Signal<rpc::worker::Response>> for W
         match &self.exec {
             WorkerExec::Remote(remote_exec) => {
                 remote_exec
-                    .execute(sig.originating_at(Caller::Server(self.server_id)))
+                    .execute(sig.originating_at(Participant::Server(self.server_id).into()))
                     .await?
             }
             WorkerExec::Local(local_exec) => {
@@ -118,7 +108,9 @@ impl ExecutorMulti<Signal<rpc::worker::Request>, Result<Signal<rpc::worker::Resp
         match &self.exec {
             WorkerExec::Remote(remote_exec) => {
                 remote_exec
-                    .execute_to_multi(sig.originating_at(Caller::Server(self.server_id)))
+                    .execute_to_multi(
+                        sig.originating_at(Participant::Server(self.server_id).into()),
+                    )
                     .await
             }
             WorkerExec::Local(local_exec) => {
@@ -133,37 +125,35 @@ impl ExecutorMulti<Signal<rpc::worker::Request>, Result<Signal<rpc::worker::Resp
 #[derive(Clone)]
 pub struct Config {
     pub listeners: Vec<CompositeAddress>,
-    /// Name of the server
+    /// Name of the server.
     pub name: String,
-    /// Description of the server
+    /// Description of the server.
     pub description: String,
 
     /// Time since last traffic from any client until server is shutdown,
-    /// set to none to keep alive forever
+    /// set to none to keep alive forever.
     pub self_keepalive: Option<Duration>,
-    /// Time between polls in the main loop
+    /// Time between polls in the main loop.
     pub poll_wait: Duration,
-    /// Delay between polling for new incoming client connections
+    /// Delay between polling for new incoming client connections.
     pub accept_delay: Duration,
 
-    /// Time since last traffic from client until connection is terminated
+    /// Time since last traffic from client until connection is terminated.
     pub client_keepalive: Option<Duration>,
     /// Compress outgoing messages
     pub use_compression: bool,
 
-    /// Whether to require authorization of incoming clients
-    pub use_auth: bool,
-    /// User and password pairs for client authorization
+    /// Whether to require authorization of incoming clients.
+    pub require_auth: bool,
+    /// User and password pairs for client authorization.
     pub auth_pairs: Vec<(String, String)>,
-
-    pub require_client_registration: bool,
 
     // TODO: additional configuration specific to the http adapter.
     pub http: HttpConfig,
 
-    /// List of transports supported for client connections
+    /// List of transports supported for client connections.
     pub transports: Vec<Transport>,
-    /// List of encodings supported for client connections
+    /// List of encodings supported for client connections.
     pub encodings: Vec<Encoding>,
 }
 
@@ -181,10 +171,8 @@ impl Default for Config {
             client_keepalive: Some(Duration::from_secs(4)),
             use_compression: false,
 
-            use_auth: false,
+            require_auth: false,
             auth_pairs: Vec::new(),
-
-            require_client_registration: false,
 
             http: HttpConfig::default(),
 
@@ -777,11 +765,51 @@ async fn handle_message(
 ) -> Result<Option<Message>> {
     let client_id = match msg {
         Message::RegisterClientRequest(req) => {
-            // TODO auth incoming clients.
+            // Double check if it's not an existing client trying to register
+            // multiple times.
+            if client_id.is_some() {
+                return Err(Error::Other(format!(
+                    "existing client attempted registration again"
+                )));
+            }
+
+            let server_ = server.lock().await;
+            if server_.config.require_auth {
+                if let Some(token) = req.auth_token {
+                    if let Some(worker) = &server_.worker {
+                        // Perform auth, cross-checking with the access control
+                        // list.
+                        // NOTE: leader is authoritative on ACL, but all workers
+                        // maintain a synced version.
+                        if worker
+                            .execute(
+                                Signal::from(rpc::worker::Request::Authorize { token })
+                                    .originating_at(Participant::Server(server_.id).into()),
+                            )
+                            .await?
+                            .discard_context()
+                            .is_ok()
+                        {
+                            // Passed auth check.
+                            ()
+                        } else {
+                            return Err(Error::Forbidden(format!("provided invalid auth")));
+                        }
+                    } else {
+                        return Err(Error::WorkerNotConnected("".to_owned()));
+                    }
+                } else {
+                    return Err(Error::Forbidden(format!("failed to provide valid auth")));
+                }
+            }
+            drop(server_);
+
+            // TODO: introduce a cooldown for caller IP address on unsucessful
+            // registration.
 
             let id = Uuid::new_v4();
 
-            // TODO support transport and encoding negotiation
+            // TODO: support transport and encoding negotiation.
             let client = Client {
                 id,
                 addr: peer_addr,
@@ -794,10 +822,6 @@ async fn handle_message(
                 last_event: Instant::now(),
                 auth_pair: None,
                 name: req.name,
-                scheduled_transfers: Default::default(),
-                scheduled_advance_response: None,
-                order_store: Default::default(),
-                order_id_pool: IdPool::new(),
             };
 
             if client.is_blocking {
@@ -805,11 +829,6 @@ async fn handle_message(
             }
 
             server.lock().await.clients.insert(id, client);
-
-            if let Some(peer_addr) = peer_addr {
-                // HACK
-                // server.lock().await.clients_by_addr.insert(peer_addr, id);
-            }
 
             return Ok(Some(Message::RegisterClientResponse(
                 msg::RegisterClientResponse {
@@ -821,14 +840,9 @@ async fn handle_message(
             )));
         }
         _ => {
-            if client_id.is_none() && server.lock().await.config.require_client_registration {
+            if client_id.is_none() {
                 // Client id is required but cannot be determined. Return a hard error.
                 return Err(Error::Forbidden("client not recognized".to_string()));
-            } else if client_id.is_none() {
-                // If client id is not known and at the same time not required,
-                // then we provide the caller with Uuid::nil(). This allows for
-                // quickly setting up unidentified access for callers.
-                Uuid::nil()
             } else {
                 // Otherwise client id must be known, just unwrap it.
                 client_id.unwrap()
@@ -853,18 +867,12 @@ async fn handle_message(
 
             Ok(Some(Message::Disconnect))
         }
-        Message::StatusRequest(req) => {
-            // use server_worker::{Request, Response, RequestLocal};
-            // server.worker.server_exec.execute(RequestLocal::Request(Request::))
-
-            let mut _server = server.lock().await;
-            // let clock = *_server.clock.1.borrow();
-
-            _server
-                .handle_status_request(req, &client_id)
-                .await
-                .map(|msg| Some(msg))
-        }
+        Message::StatusRequest(req) => server
+            .lock()
+            .await
+            .handle_status_request(req, &client_id)
+            .await
+            .map(|msg| Some(msg)),
         Message::AdvanceRequest(req) => {
             debug!("server got step request: step_count {}", req.step_count);
 
@@ -878,7 +886,7 @@ async fn handle_message(
                 let resp = worker
                     .execute(
                         Signal::from(rpc::worker::Request::ProcessQuery(q))
-                            .originating_at(Caller::Server(server_id)),
+                            .originating_at(Participant::Server(server_id).into()),
                     )
                     .await?
                     .into_payload();

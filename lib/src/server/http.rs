@@ -154,9 +154,9 @@ async fn register_client(
             ConnectionOrAddress::Address(addr),
             Message::RegisterClientRequest(RegisterClientRequest {
                 name: credentials.name,
-                // TODO: figure out allowing blocking http clients
+                // TODO: figure out allowing blocking http clients.
                 is_blocking: false,
-                auth_pair: None,
+                auth_token: None,
                 encodings: vec![Encoding::Json],
                 transports: vec![Transport::HttpServer],
             }),
