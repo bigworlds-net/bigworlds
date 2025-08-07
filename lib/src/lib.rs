@@ -31,7 +31,6 @@ pub mod net;
 pub mod query;
 pub mod rpc;
 pub mod util;
-pub mod util_net;
 
 pub mod service;
 pub mod sim;

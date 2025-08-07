@@ -32,7 +32,7 @@ use crate::executor::{Executor, LocalExec};
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::rpc::node::{Request, Response};
 use crate::time::Duration;
-use crate::util_net::{decode, encode};
+use crate::util::{decode, encode};
 use crate::{leader, net, rpc, server, worker, Error, Relay, RemoteExec, Result};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -33,7 +33,7 @@ pub fn spawn(
         )));
     };
 
-    let handle = tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
         let router = Router::new()
             .route("/ws", any(ws_handler))
             .route("/status", get(status))
@@ -158,7 +158,7 @@ async fn register_client(
                 is_blocking: false,
                 auth_pair: None,
                 encodings: vec![Encoding::Json],
-                transports: vec![Transport::Http],
+                transports: vec![Transport::HttpServer],
             }),
         ))
         .await?;

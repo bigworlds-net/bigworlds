@@ -9,13 +9,9 @@ use url::Url;
 use crate::executor::{Executor, LocalExec};
 use crate::{Error, Result};
 
-pub mod framed_tcp;
-#[cfg(feature = "quic_transport")]
 pub mod quic;
 #[cfg(feature = "ws_transport")]
 pub mod ws;
-#[cfg(feature = "zmq_transport")]
-pub mod zmq;
 
 /// Unified representation of an encoding, transport and address triple.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -166,41 +162,29 @@ pub fn get_available_address() -> Result<SocketAddr> {
 /// List of possible network transports.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum Transport {
-    /// Framed TCP using tokio socket, varint frame description.
-    FramedTcp,
-    /// UDP-based Quic transport, supports unordered and/or unreliable.
+    /// Modern UDP-based transport.
     Quic,
-    /// WebSocket transport aimed at browser connections.
+    /// TCP-based transport aimed at browser connections.
     WebSocket,
-    /// Secure WebSocket transport aimed at browser connections.
+    /// TCP-based transport aimed at browser connections.
     SecureWebSocket,
-    /// TCP using ZeroMQ.
-    ZmqTcp,
-    /// IPC using ZeroMQ.
-    ZmqIpc,
-    /// IPC using NNG.
-    NngIpc,
-    /// WebSocket using NNG.
-    NngWs,
 
-    /// While HTTP is not really a transport, we define it as one here so we
-    /// can use it with composite addresses, e.g. `http://127.0.0.1:8000`.
-    /// This is useful when spawning a multi-transport server for example.
-    Http,
+    // While they are not really transports, and are only available for
+    // client-server communications, we include http and grpc as transports
+    // so we can use them in composite addresses when defining listeners, e.g.
+    // `http://127.0.0.1:9123` or `grpc://[::]:9124`
+    HttpServer,
+    GrpcServer,
 }
 
 impl Display for Transport {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FramedTcp => write!(f, "tcp"),
             Self::Quic => write!(f, "quic"),
             Self::WebSocket => write!(f, "ws"),
             Self::SecureWebSocket => write!(f, "wss"),
-            Self::Http => write!(f, "http"),
-            Self::ZmqTcp => write!(f, "zmq_tcp"),
-            Self::ZmqIpc => write!(f, "zmq_ipc"),
-            Self::NngIpc => write!(f, "nng_ipc"),
-            Self::NngWs => write!(f, "nng_ws"),
+            Self::HttpServer => write!(f, "http_server"),
+            Self::GrpcServer => write!(f, "grpc_server"),
         }
     }
 }
@@ -209,13 +193,11 @@ impl FromStr for Transport {
     type Err = Error;
     fn from_str(s: &str) -> core::result::Result<Self, Error> {
         match s.to_lowercase().as_str() {
-            "tcp" => Ok(Transport::FramedTcp),
             "quic" => Ok(Transport::Quic),
             "websocket" | "web_socket" | "web-socket" | "ws" => return Ok(Transport::WebSocket),
             "wss" => return Ok(Transport::SecureWebSocket),
-            "http" => Ok(Transport::Http),
-            "zmq_tcp" | "zmq" | "zeromq" => return Ok(Transport::ZmqTcp),
-            "zmq_ipc" | "ipc" => return Ok(Transport::ZmqIpc),
+            "http" | "http_server" => Ok(Transport::HttpServer),
+            "grpc" | "grpc_server" => Ok(Transport::GrpcServer),
             _ => {
                 return Err(Error::ParsingError(format!(
                     "failed parsing transport from string: {}, available transports: {:?}",
@@ -231,34 +213,30 @@ impl Transport {
     /// Lists all supported transports.
     pub fn list_supported() -> Vec<String> {
         let mut list = vec![];
-        list.push(Transport::FramedTcp.to_string());
-        #[cfg(feature = "quic_transport")]
         list.push(Transport::Quic.to_string());
         #[cfg(feature = "ws_transport")]
         list.push(Transport::WebSocket.to_string());
-        #[cfg(feature = "zmq_transport")]
-        {
-            list.push(Transport::ZmqTcp.to_string());
-            list.push(Transport::ZmqIpc.to_string());
-        }
-        #[cfg(feature = "nng_transport")]
-        {
-            list.push(Transport::NngWs.to_string());
-            list.push(Transport::NngWs.to_string());
-        }
+        #[cfg(feature = "ws_transport")]
+        list.push(Transport::SecureWebSocket.to_string());
+        #[cfg(feature = "http_server")]
+        list.push(Transport::HttpServer.to_string());
+        #[cfg(feature = "grpc_server")]
+        list.push(Transport::GrpcServer.to_string());
         list
     }
 }
 
 /// List of possible formats for encoding data sent over the network.
+///
+/// TODO: consider adding protobufs as a standalone encoding scheme.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Encoding {
     /// Fast binary format for communication between Rust apps.
+    #[default]
     Bincode,
     /// Binary format with implementations in many different languages.
     MsgPack,
     /// Very common but more verbose format.
-    #[default]
     Json,
 }
 
@@ -267,9 +245,7 @@ impl FromStr for Encoding {
     fn from_str(s: &str) -> core::result::Result<Self, Error> {
         let e = match s.to_lowercase().as_str() {
             "bincode" | "bin" => Self::Bincode,
-            #[cfg(feature = "msgpack_encoding")]
             "msgpack" | "messagepack" | "rmp" => Self::MsgPack,
-            #[cfg(feature = "json_encoding")]
             "json" => Self::Json,
             _ => {
                 return Err(Error::Other(format!(
@@ -313,11 +289,6 @@ pub fn spawn_listeners(
                 net_exec.clone(),
                 cancel.clone(),
             )?,
-            Some(Transport::FramedTcp) => framed_tcp::spawn_listener(
-                listener_addr.address.clone().try_into()?,
-                net_exec.clone(),
-                cancel.clone(),
-            ),
             #[cfg(feature = "ws_transport")]
             Some(Transport::WebSocket) => ws::spawn_listener(
                 listener_addr.address.clone().try_into()?,
@@ -325,8 +296,13 @@ pub fn spawn_listeners(
                 cancel.clone(),
             ),
             #[cfg(feature = "http_server")]
-            Some(Transport::Http) => {
-                // We spawn the http listener elsewhere
+            Some(Transport::HttpServer) => {
+                // We spawn the http listener elsewhere.
+                continue;
+            }
+            #[cfg(feature = "grpc_server")]
+            Some(Transport::GrpcServer) => {
+                // We spawn the grpc listener elsewhere.
                 continue;
             }
             _ => unimplemented!(),

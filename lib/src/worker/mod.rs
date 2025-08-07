@@ -32,14 +32,10 @@ use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
 use crate::model::behavior::BehaviorInner;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::query::{self, process_query, Trigger};
-use crate::rpc::compat::{
-    DataPullRequest, DataPullResponse, DataTransferRequest, DataTransferResponse, PullRequestData,
-    TransferResponseData, VarSimDataPack,
-};
 use crate::rpc::worker::{Request, RequestLocal, Response};
 use crate::rpc::Caller;
 use crate::server::{self, ServerId};
-use crate::util_net::{decode, encode};
+use crate::util::{decode, encode};
 use crate::{
     behavior, leader, net, rpc, string, Address, CompName, EntityId, EntityName, Model, Query,
     QueryProduct, Result, StringId, Var, VarType,

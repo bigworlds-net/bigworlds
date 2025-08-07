@@ -1,3 +1,10 @@
+mod turn;
+
+#[cfg(feature = "grpc_server")]
+mod grpc;
+#[cfg(feature = "http_server")]
+mod http;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,17 +25,9 @@ use crate::rpc::server::{RequestLocal, Response};
 use crate::rpc::Caller;
 use crate::service::Service;
 use crate::time::Instant;
-use crate::util_net::{decode, encode};
+use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId};
 use crate::{net, rpc, string, worker, Address, Error, EventName, Query, Result};
-
-mod turn;
-
-mod handlers;
-mod handlers_compat;
-
-#[cfg(feature = "http_server")]
-mod http;
 
 /// Client identification also serving as an access token.
 pub type ClientId = Uuid;
@@ -77,22 +76,6 @@ pub struct Client {
 
     pub order_store: FnvHashMap<u32, Vec<Address>>,
     pub order_id_pool: IdPool,
-}
-
-impl Client {
-    // pub fn send_msg() -> Result<()> {
-    //
-    // }
-
-    pub fn push_event_triggered_query(&mut self, event: EventName, query: Query) -> Result<()> {
-        unimplemented!();
-        // info!("pushing event triggered query for event: {}", event);
-        // if !self.scheduled_queries.contains_key(&event) {
-        //     self.scheduled_queries.insert(event.clone(), Vec::new());
-        // }
-        // self.scheduled_queries.get_mut(&event).unwrap().push(query);
-        Ok(())
-    }
 }
 
 #[derive(Clone)]
@@ -206,9 +189,10 @@ impl Default for Config {
             http: HttpConfig::default(),
 
             transports: vec![
-                Transport::FramedTcp,
-                #[cfg(feature = "zmq_transport")]
-                Transport::ZmqTcp,
+                #[cfg(feature = "quic_transport")]
+                Transport::Quic,
+                #[cfg(feature = "ws_transport")]
+                Transport::WebSocket,
             ],
             encodings: vec![
                 Encoding::Bincode,
@@ -228,7 +212,6 @@ impl Default for HttpConfig {
     }
 }
 
-// TODO add an optional http interface to the server as a crate feature
 /// Connection entry point for clients.
 ///
 /// # Network interface overview
@@ -245,23 +228,18 @@ impl Default for HttpConfig {
 /// Here the client is assigned a unique id. Response includes a new address
 /// to which client should connect.
 ///
-/// # Initiating client connections
-///
-/// Server is able not only to receive from, but also to initiate connections
-/// to clients. Sent connection request includes the socket address that the
-/// client should connect to.
-///
 /// # Runtime optimizations
 ///
 /// Server capability, in terms of satisfying incoming requests, is determined
-/// by it's underlying connection with the simulation.
+/// by it's underlying connection to the cluster.
 ///
-/// Similar to how the inner layer (workers/leader) optimize at runtime,
+/// Similar to how the inner cluster layer can self-optimize at runtime,
 /// moving entities to achieve ever better system performance, the outer layer
-/// (servers/clients) does runtime optimization as well. Clients can be
-/// redirected to different servers based on their interest in particular
-/// entities and distance/latency incurred when querying those from a
-/// particular entry-point (server).
+/// is capable of runtime optimizations as well.
+///
+/// Clients can be redirected to different servers based on their interest in
+/// particular entities and distance/latency incurred when querying those from
+/// a particular server.
 pub struct Server {
     pub id: ServerId,
 
@@ -274,6 +252,8 @@ pub struct Server {
     /// Map of all clients by their unique identifier.
     pub clients: FnvHashMap<ClientId, Client>,
 
+    pub services: Vec<Service>,
+
     /// Time of creation of this server
     pub started_at: Instant,
 
@@ -281,8 +261,6 @@ pub struct Server {
     last_msg_time: Instant,
     /// Time since last new client connection accepted
     last_accept_time: Instant,
-
-    pub services: Vec<Service>,
 
     pub clock: (watch::Sender<usize>, watch::Receiver<usize>),
     pub blocked: (watch::Sender<u8>, watch::Receiver<u8>),
@@ -297,6 +275,7 @@ pub struct Handle {
 
     pub worker: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
     pub worker_id: Option<WorkerId>,
+    // TODO: return a list of listeners that were successfully established.
     // pub listeners: Vec<CompositeAddress>,
 }
 
@@ -319,7 +298,7 @@ impl Handle {
     ) -> Result<()> {
         let mut _server_id = None;
 
-        // connect server to worker
+        // Connect server to worker.
         if let rpc::server::Response::ConnectToWorker { server_id } = self
             .ctl
             .execute(Signal::from(rpc::server::RequestLocal::ConnectToWorker(
@@ -340,7 +319,7 @@ impl Handle {
     }
 }
 
-/// Spawns a new server using provided address and config.
+/// Spawns a new server using provided config.
 pub fn spawn(
     config: Config,
     mut worker_handle: worker::Handle,
@@ -357,7 +336,23 @@ pub fn spawn(
     let (net_client_executor, mut net_client_stream, mut net_client_stream_multi) =
         LocalExec::new(20);
 
-    // Web server can be enabled to serve data through an http endpoint.
+    // Grpc server can be enabled to serve data to clients through the grpc
+    // interface.
+    // NOTE: can't hide the stream behind a feature because we must expose
+    // it later in the tokio::select! macro.
+    let (grpc_client_executor, mut grpc_client_stream, mut grpc_client_stream_multi) =
+        LocalExec::new(20);
+    #[cfg(feature = "grpc_server")]
+    let grpc_listener = config
+        .listeners
+        .iter()
+        .find(|l| l.transport == Some(Transport::GrpcServer));
+    #[cfg(feature = "grpc_server")]
+    if let Some(listener) = grpc_listener {
+        let _ = grpc::spawn(listener.clone(), grpc_client_executor, cancel.clone());
+    }
+
+    // Http server can be enabled to serve data through an http endpoint.
     // NOTE: can't hide the stream behind a feature because we must expose
     // it later in the tokio::select! macro.
     let (http_client_executor, mut http_client_stream, _) = LocalExec::new(20);
@@ -366,8 +361,7 @@ pub fn spawn(
     let http_listener = config
         .listeners
         .iter()
-        .find(|l| l.transport == Some(Transport::Http));
-    // Only spawn the http server if
+        .find(|l| l.transport == Some(Transport::HttpServer));
     #[cfg(feature = "http_server")]
     if let Some(listener) = http_listener {
         let _ = http::spawn(listener.clone(), http_client_executor, cancel.clone());
@@ -380,7 +374,7 @@ pub fn spawn(
 
     info!("spawning server task, listeners: {:?}", config.listeners);
 
-    // Spawn the server structure
+    // Create server state.
     let mut server = Arc::new(Mutex::new(Server {
         id: Uuid::new_v4(),
         worker: None,
@@ -489,7 +483,7 @@ pub fn spawn(
                         // TODO: we're needlessly calling find_client_id twice,
                         // once here and once inside the handler.
                         let encoding = find_client_id(&caller, server.clone()).await.map(|(enc, _)| enc).unwrap_or_default();
-                        let resp = handle_net_client_message(caller, msg_bytes, server, None).await;
+                        let resp = handle_client_message_bytes(caller, msg_bytes, server, None).await;
 
                         // In case of any errors rewrite the response as
                         // `Message::ErrorResponse`.
@@ -512,7 +506,7 @@ pub fn spawn(
                         // TODO: we're needlessly calling find_client_id twice,
                         // once here and once inside the handler.
                         let encoding = find_client_id(&caller, server.clone()).await.map(|(enc, _)| enc).unwrap_or_default();
-                        let resp = handle_net_client_message(caller, msg_bytes, server, Some(s.clone())).await;
+                        let resp = handle_client_message_bytes(caller, msg_bytes, server, Some(s.clone())).await;
 
                         // In case of any errors rewrite the response as
                         // `Message::ErrorResponse`.
@@ -528,10 +522,42 @@ pub fn spawn(
                         s.send(bytes);
                     });
                 },
+                Some(((addr, msg), s)) = grpc_client_stream.next() => {
+                    debug!("handling grpc client msg: {:?}", msg);
+                    let server = server.clone();
+                    tokio::spawn(async move {
+                        let resp = handle_client_message(addr, msg, server, None).await;
+                        let resp = match resp {
+                            Ok(Some(msg)) => msg,
+                            Ok(None) => return,
+                            Err(e) => {
+                                warn!("{:?}", e);
+                                Message::ErrorResponse(format!("{:?}", e))
+                            }
+                        };
+                        s.send(resp);
+                    });
+                },
+                Some(((addr, msg), s)) = grpc_client_stream_multi.next() => {
+                    debug!("handling grpc client msg (streaming response): {:?}", msg);
+                    let server = server.clone();
+                    tokio::spawn(async move {
+                        let resp = handle_client_message(addr, msg, server, Some(s.clone())).await;
+                        let resp = match resp {
+                            Ok(Some(msg)) => msg,
+                            Ok(None) => return,
+                            Err(e) => {
+                                warn!("{:?}", e);
+                                Message::ErrorResponse(format!("{:?}", e))
+                            }
+                        };
+                        s.send(resp);
+                    });
+                },
                 Some(((addr, msg), s)) = http_client_stream.next() => {
                     let server = server.clone();
                     tokio::spawn(async move {
-                        let resp = handle_http_client_message(addr, msg, server).await;
+                        let resp = handle_client_message(addr, msg, server, None).await;
                         let resp = match resp {
                             Ok(Some(msg)) => Ok(msg),
                             Ok(None) => return,
@@ -594,6 +620,7 @@ async fn handle_local_ctl_request(
     }
 }
 
+/// Controller handler dealing with requests sent through the worker handle.
 async fn handle_ctl_request(
     req: rpc::server::Request,
     ctx: Option<rpc::Context>,
@@ -602,38 +629,21 @@ async fn handle_ctl_request(
     use rpc::server::{Request as ServerRequest, Response as ServerResponse};
     match req {
         ServerRequest::Status => {
-            // let scenario = server
-            //     .lock()
-            //     .await
-            //     .worker
-            //     .as_ref()
-            //     .expect("server not connected to worker")
-            //     .execute(Request::Scenario)
-            //     .await?;
-            // println!(">> scenario: {:?}", scenario);
-            Ok(Signal::new(ServerResponse::Status { uptime: 66 }, ctx))
+            let server = server.lock().await;
+            Ok(Signal::new(
+                ServerResponse::Status {
+                    uptime_secs: server.started_at.elapsed().as_secs(),
+                    clients: server.clients.len() as u32,
+                },
+                ctx,
+            ))
         }
-        // ServerRequest::UploadProject(project) => {
-        //     // propagate request to the connected worker
-        //     let resp = server
-        //         .lock()
-        //         .await
-        //         .worker
-        //         .as_ref()
-        //         .ok_or(Error::WorkerNotConnected("".to_string()))?
-        //         .execute(Request::PullModel(project))
-        //         .await?;
-        //     println!("upload project worker resp: {:?}", resp);
-        //     Ok(ServerResponse::UploadProject { success: true })
-        // }
-        // ServerRequest::Message(msg) => {
-        //     let resp = handle_message(client_id, None, msg, server, runtime).await;
-        //     s.send(resp.map(|msg| ServerResponse::Message(msg)));
-        // }
         _ => unimplemented!("request: {req:?}"),
     }
 }
 
+/// Specialized handler dealing with requests coming from local workers over
+/// an in-process channel.
 async fn handle_local_worker_request(
     req: rpc::server::RequestLocal,
     ctx: Option<rpc::Context>,
@@ -687,10 +697,11 @@ async fn handle_local_client_request(
     handle_message(client_id, None, msg, server.clone(), None, None).await
 }
 
-async fn handle_http_client_message(
+async fn handle_client_message(
     caller: ConnectionOrAddress,
     msg: Message,
     server: Arc<Mutex<Server>>,
+    resp_stream: Option<mpsc::Sender<Message>>,
 ) -> Result<Option<Message>> {
     let (encoding, client) = find_client_id(&caller, server.clone()).await?;
 
@@ -699,8 +710,15 @@ async fn handle_http_client_message(
         ConnectionOrAddress::Address(socket_addr) => Some(socket_addr),
     };
 
-    debug!("handling web client msg: {:?}", msg);
-    let resp = handle_message(client.map(|c| c.id), peer_addr, msg, server, None, None).await;
+    let resp = handle_message(
+        client.map(|c| c.id),
+        peer_addr,
+        msg,
+        server,
+        resp_stream,
+        None,
+    )
+    .await;
     let resp = match resp {
         Ok(Some(msg)) => msg,
         Ok(None) => return Ok(None),
@@ -713,7 +731,10 @@ async fn handle_http_client_message(
     Ok(Some(resp))
 }
 
-async fn handle_net_client_message(
+/// Handler responsible for handling an encoded message from client.
+///
+/// As part of
+async fn handle_client_message_bytes(
     caller: ConnectionOrAddress,
     bytes: Vec<u8>,
     server: Arc<Mutex<Server>>,
@@ -756,7 +777,7 @@ async fn handle_message(
 ) -> Result<Option<Message>> {
     let client_id = match msg {
         Message::RegisterClientRequest(req) => {
-            // TODO auth incoming clients
+            // TODO auth incoming clients.
 
             let id = Uuid::new_v4();
 
@@ -794,7 +815,7 @@ async fn handle_message(
                 msg::RegisterClientResponse {
                     client_id: id.to_string(),
                     encoding: Encoding::Bincode,
-                    transport: Transport::FramedTcp,
+                    transport: Transport::Quic,
                     redirect_to: None,
                 },
             )));
@@ -991,7 +1012,7 @@ async fn handle_message(
     }
 }
 
-// TODO: consider returning just the client id instead of the whole thing.
+// TODO: consider returning just the client id instead of a tuple.
 async fn find_client_id(
     caller: &ConnectionOrAddress,
     server: Arc<Mutex<Server>>,
@@ -1120,118 +1141,20 @@ impl Server {
         // }
         // }
 
-        Ok(())
+        unimplemented!()
     }
 
     /// This function handles shutdown cleanup, like stopping spawned services.
     pub fn cleanup(&mut self) -> Result<()> {
-        for service in &mut self.services {
-            // service.stop();
-        }
-        Ok(())
+        unimplemented!()
     }
-
-    // async fn handle_compat_message(
-    //     &mut self,
-    //     msg: compat::Message,
-    //     client_id: &ClientId,
-    // ) -> Result<()> {
-    //     println!("handling compat message: {:?}", msg);
-    //     match msg.type_ {
-    //         // MessageType::QueryRequest => self.handle_query_request_compat(msg, client_id),
-    //         _ => self.handle_message(msg.into(), client_id).await,
-    //     }
-    // }
-    //
-    // async fn handle_message(&mut self, msg: Message, client_id: &ClientId) -> Result<()> {
-    //     let response = match msg {
-    //         // Message::Heartbeat => (),
-    //         Message::RegisterClientRequest(req) => {
-    //             tokio::time::sleep(Duration::from_secs(3)).await;
-    //             println!(">>>>>>>>> done processing");
-    //         }
-    //         Message::PingRequest(bytes) => self.handle_ping_request(bytes, client_id)?,
-    //         Message::StatusRequest(sr) => self.handle_status_request(sr, client_id).await?,
-    //         Message::TurnAdvanceRequest(tar) => {
-    //             self.handle_turn_advance_request(tar, client_id).await?
-    //         }
-    //         // Message::QueryRequestCompat(qr) => self.handle_query_request_compat(msg, client_id)?,
-    //         // MessageCompatType::NativeQueryRequest => {
-    //         //     self.handle_native_query_request(msg, client_id)?
-    //         // }
-    //         // MessageCompatType::JsonPullRequest => self.handle_json_pull_request(msg, client_id)?,
-    //         Message::DataTransferRequest(dtr) => {
-    //             // self.handle_data_transfer_request(dtr, client_id).await?
-    //         }
-    //         Message::TypedDataTransferRequest(tdtr) => {
-    //             // self.handle_typed_data_transfer_request(tdtr, client_id)?
-    //         }
-    //         Message::DataPullRequest(dpr) => {
-    //             // self.handle_data_pull_request(dpr, client_id)?
-    //         }
-    //         Message::TypedDataPullRequest(tdpr) => {
-    //             // self.handle_typed_data_pull_request(tdpr, client_id)?
-    //         }
-    //         Message::ScheduledDataTransferRequest(sdtr) => {
-    //             // self.handle_scheduled_data_transfer_request(sdtr, client_id)?
-    //         }
-    //         Message::SpawnEntitiesRequest(ser) => {
-    //             self.handle_spawn_entities_request(ser, client_id)?
-    //         }
-    //         Message::ExportSnapshotRequest(esr) => {
-    //             self.handle_export_snapshot_request(esr, client_id)?
-    //         }
-    //         _ => println!("unknown message: {:?}", msg),
-    //     };
-    //     // self.clients
-    //     //     .get_mut(client_id)
-    //     //     .unwrap()
-    //     //     .connection
-    //     //     .send_obj(response, None);
-    //     Ok(())
-    // }
 
     pub fn handle_export_snapshot_request(
         &mut self,
         esr: msg::ExportSnapshotRequest,
         client_id: &ClientId,
     ) -> Result<()> {
-        let client = self
-            .clients
-            .get_mut(client_id)
-            .ok_or(Error::FailedGettingClientById(client_id.clone()))?;
-        // let esr: ExportSnapshotRequest = msg.unpack_payload(client.connection.encoding())?;
-        // let snap = match &mut self.sim {
-        //     SimCon::Local(sim) => {
-        //         if esr.save_to_disk {
-        //             sim.save_snapshot(&esr.name, false)?;
-        //         }
-        //         if esr.send_back {
-        //             let resp = Message::ExportSnapshotResponse(ExportSnapshotResponse {
-        //                 error: "".to_string(),
-        //                 snapshot: vec![],
-        //             });
-        //             // client.connection.send_obj(resp, None);
-        //         }
-        //         return Ok(());
-        //     }
-        //     SimCon::Leader(org) => {
-        //         // let task_id = org.init_download_snapshots()?;
-        //         // TODO perhaps request separate id for leader and server levels
-        //         // self.tasks.insert(
-        //         //     task_id,
-        //         //     ServerTask::WaitForLeaderSnapshotResponses {
-        //         //         client_id: *client_id,
-        //         //         compressed: true,
-        //         //     },
-        //         // );
-        //         return Err(Error::WouldBlock);
-        //     }
-        //     _ => unimplemented!(),
-        // };
-
-        // client.connection.send_payload(resp, None)
-        Ok(())
+        unimplemented!()
     }
 
     pub fn handle_spawn_entities_request(
@@ -1339,418 +1262,22 @@ impl Server {
             unimplemented!()
         }
     }
-
-    // pub async fn handle_data_transfer_request(
-    //     &mut self,
-    //     dtr: DataTransferRequest,
-    //     client_id: &ClientId,
-    // ) -> Result<()> {
-    //     let mut client = self.clients.get_mut(client_id).unwrap();
-    //     let mut data_pack = TypedSimDataPack::empty();
-    //     match &mut self.sim {
-    //         SimCon::Local(sim_instance) => {
-    //             handle_data_transfer_request_local(&dtr, sim_instance, client)?
-    //         }
-    //         SimCon::Leader(org) => {
-    //             let mut vars = FnvHashMap::default();
-    //             match dtr.transfer_type.as_str() {
-    //                 "Full" => {
-    //                     for (worker_id, worker) in &mut org.net.workers {
-    //                         worker.connection.send_obj(
-    //                             crate::sig::Signal::new(
-    //                                 0,
-    //                                 *worker_id,
-    //                                 TaskId::new_v4(),
-    //                                 engine_core::distr::Signal::DataRequestAll,
-    //                             ),
-    //                             None,
-    //                         )?
-    //                     }
-    //                     for (worker_id, worker) in &mut org.net.workers {
-    //                         let (_, sig) = worker.connection.recv_obj::<NetSignal>().await?;
-    //                         match sig.into_inner().1 {
-    //                             engine_core::distr::Signal::DataResponse(data) => vars.extend(data),
-    //                             s => warn!("unhandled signal: {:?}", s),
-    //                         }
-    //                     }
-    //
-    //                     let response = Message::DataTransferResponse(DataTransferResponse {
-    //                         data: TransferResponseData::Var(VarSimDataPack { vars }),
-    //                     });
-    //                     // client.connection.send_obj(response, None)?;
-    //                 }
-    //                 _ => unimplemented!(),
-    //             }
-    //         }
-    //         SimCon::Worker(worker) => {
-    //             //TODO
-    //             // categorize worker connection to the cluster, whether it's only connected
-    //             // to the leader, to leader and to all workers, or some other way
-    //             worker
-    //                 .net
-    //                 .sig_send_central(TaskId::new_v4(), Signal::DataRequestAll)?;
-    //
-    //             // for (worker_id, worker) in &mut worker.network.comrades {
-    //             //     let (_, sig) = worker.connection.recv_sig()?;
-    //             //     match sig.into_inner() {
-    //             //         bigworlds::distr::Signal::DataResponse(data) => {
-    //             //             collection.extend(data)
-    //             //         }
-    //             //         _ => unimplemented!(),
-    //             //     }
-    //             // }
-    //
-    //             let (task_id, resp) = worker.net.sig_read_central().await?;
-    //             if let Signal::DataResponse(data_vec) = resp {
-    //                 let mut data_pack = VarSimDataPack::default();
-    //                 for (addr, var) in data_vec {
-    //                     data_pack.vars.insert((addr.0, addr.1, addr.2), var);
-    //                 }
-    //                 for (entity_id, entity) in &worker.sim_node.as_ref().unwrap().entities {
-    //                     for ((comp_name, var_name), var) in &entity.storage.map {
-    //                         data_pack.vars.insert(
-    //                             (
-    //                                 string::new_truncate(&entity_id.to_string()),
-    //                                 comp_name.clone(),
-    //                                 var_name.clone(),
-    //                             ),
-    //                             var.clone(),
-    //                         );
-    //                     }
-    //                 }
-    //
-    //                 let response = Message::DataTransferResponse(DataTransferResponse {
-    //                     data: TransferResponseData::Var(data_pack),
-    //                 });
-    //                 // client.connection.send_obj(response, None)?;
-    //             }
-    //         }
-    //     };
-    //
-    //     Ok(())
-    // }
-
-    // pub fn handle_typed_data_transfer_request(
-    //     &mut self,
-    //     tdtr: TypedDataTransferRequest,
-    //     client_id: &ClientId,
-    // ) -> Result<()> {
-    //     let mut client = self.clients.get_mut(client_id).unwrap();
-    //     let mut data_pack = TypedSimDataPack::empty();
-    //     match &mut self.sim {
-    //         SimCon::Local(sim_instance) => {
-    //             let model = &sim_instance.model;
-    //             match tdtr.transfer_type.as_str() {
-    //                 "Full" => {
-    //                     // let mut data_pack = bigworlds::query::AddressedTypedMap::default();
-    //                     let mut data_pack = TypedSimDataPack::empty();
-    //                     for (entity_uid, entity) in &sim_instance.entities {
-    //                         for ((comp_name, var_id), v) in entity.storage.map.iter() {
-    //                             if v.is_float() {
-    //                                 data_pack.floats.insert(
-    //                                     // format!(
-    //                                     //     ":{}:{}:{}:{}",
-    //                                     //     // get entity string id if available
-    //                                     //     sim_instance
-    //                                     //         .entities_idx
-    //                                     //         .iter()
-    //                                     //         .find(|(e_id, e_idx)| e_idx == &entity_uid)
-    //                                     //         .map(|(e_id, _)| e_id.as_str())
-    //                                     //         .unwrap_or(entity_uid.to_string().as_str()),
-    //                                     //     comp_name,
-    //                                     //     VarType::Float.to_str(),
-    //                                     //     var_id
-    //                                     // ),
-    //                                     Address {
-    //                                         // get entity string id if available
-    //                                         entity: sim_instance
-    //                                             .entity_idx
-    //                                             .iter()
-    //                                             .find(|(e_id, e_idx)| e_idx == &entity_uid)
-    //                                             .map(|(e_id, _)| e_id.clone())
-    //                                             .unwrap_or(string::new_truncate(
-    //                                                 &entity_uid.to_string(),
-    //                                             )),
-    //                                         // entity: entity_uid.parse().unwrap(),
-    //                                         component: comp_name.clone(),
-    //                                         var_type: VarType::Float,
-    //                                         var_name: var_id.clone(),
-    //                                     }
-    //                                     .into(),
-    //                                     // comp_name.to_string(),
-    //                                     *v.as_float().unwrap(),
-    //                                 );
-    //                             }
-    //                         }
-    //                     }
-    //
-    //                     let response =
-    //                         Message::TypedDataTransferResponse(TypedDataTransferResponse {
-    //                             data: data_pack,
-    //                             error: String::new(),
-    //                         });
-    //                     // client.connection.send_obj(response, None);
-    //                 }
-    //                 _ => unimplemented!(),
-    //             }
-    //         }
-    //         _ => unimplemented!(),
-    //     }
-    //     Ok(())
-    // }
-
-    // pub fn handle_scheduled_data_transfer_request(
-    //     &mut self,
-    //     sdtr: ScheduledDataTransferRequest,
-    //     client_id: &ClientId,
-    // ) -> Result<()> {
-    //     let mut client = self
-    //         .clients
-    //         .get_mut(client_id)
-    //         .ok_or(Error::Other("failed getting client".to_string()))?;
-    //     for event_trigger in sdtr.event_triggers {
-    //         let event_id = string::new(&event_trigger)?;
-    //         if !client.scheduled_transfers.contains_key(&event_id) {
-    //             client
-    //                 .scheduled_transfers
-    //                 .insert(event_id.clone(), Vec::new());
-    //         }
-    //         let dtr = DataTransferRequest {
-    //             transfer_type: sdtr.transfer_type.clone(),
-    //             selection: sdtr.selection.clone(),
-    //         };
-    //         client
-    //             .scheduled_transfers
-    //             .get_mut(&event_id)
-    //             .unwrap()
-    //             .push(dtr);
-    //     }
-    //
-    //     Ok(())
-    // }
-
-    fn handle_single_address(server: &Server) {}
-
-    // pub fn handle_list_local_scenarios_request(
-    //     &mut self,
-    //     payload: Vec<u8>,
-    //     client: &mut Client,
-    // ) -> Result<()> {
-    //     let req: ListLocalScenariosRequest = decode(&payload, client.connection.encoding())?;
-    //     //TODO check `$working_dir/scenarios` for scenarios
-    //     //
-    //     //
-    //
-    //     let resp = Message::ListLocalScenariosResponse(ListLocalScenariosResponse {
-    //         scenarios: Vec::new(),
-    //         error: String::new(),
-    //     });
-    //     client.connection.send_obj(resp, None)?;
-    //     Ok(())
-    // }
-
-    // pub fn handle_load_local_scenario_request(
-    //     payload: Vec<u8>,
-    //     server_arc: Arc<Mutex<Server>>,
-    //     client: &mut Client,
-    // ) -> Result<()> {
-    //     let req: LoadLocalScenarioRequest = decode(&payload, client.connection.encoding())?;
-    //
-    //     //TODO
-    //     //
-    //
-    //     let resp = Message::LoadLocalScenarioResponse(LoadLocalScenarioResponse {
-    //         error: String::new(),
-    //     });
-    //     client.connection.send_obj(resp, None)?;
-    //     Ok(())
-    // }
-
-    // pub fn handle_load_remote_scenario_request(
-    //     payload: Vec<u8>,
-    //     server_arc: Arc<Mutex<Server>>,
-    //     client: &mut Client,
-    // ) -> Result<()> {
-    //     let req: LoadRemoteScenarioRequest = decode(&payload, client.connection.encoding())?;
-    //
-    //     //TODO
-    //     //
-    //
-    //     let resp = Message::LoadRemoteScenarioResponse(LoadRemoteScenarioResponse {
-    //         error: String::new(),
-    //     });
-    //     client.connection.send_obj(resp, None)?;
-    //     Ok(())
-    // }
 }
-
-// fn handle_data_transfer_request_local(
-//     request: &DataTransferRequest,
-//     sim: &SimExec,
-//     client: &mut Client,
-// ) -> Result<()> {
-//     let model = &sim.model;
-//     match request.transfer_type.as_str() {
-//         "Full" => {
-//             let mut data_pack = VarSimDataPack::default();
-//             for (entity_id, entity) in &sim.entities {
-//                 for ((comp_name, var_id), v) in entity.storage.map.iter() {
-//                     let mut ent_name = EntityName::from(entity_id.to_string());
-//                     if let Some((_ent_name, _)) =
-//                         sim.entity_idx.iter().find(|(_, id)| id == &entity_id)
-//                     {
-//                         ent_name = _ent_name.clone();
-//                     }
-//                     data_pack.vars.insert(
-//                         // format!(
-//                         //     "{}:{}:{}:{}",
-//                         //     entity_uid,
-//                         //     comp_name,
-//                         //     v.get_type().to_str(),
-//                         //     var_id
-//                         // ),
-//                         (ent_name, comp_name.clone(), var_id.clone()),
-//                         v.clone(),
-//                     );
-//                 }
-//             }
-//
-//             let response = Message::DataTransferResponse(DataTransferResponse {
-//                 data: TransferResponseData::Var(data_pack),
-//             });
-//             // client.connection.send_obj(response, None)?;
-//             println!("sent data transfer response");
-//             Ok(())
-//         }
-//         "Select" => {
-//             let mut data_pack = TypedSimDataPack::empty();
-//             let mut selected = Vec::new();
-//             selected.extend_from_slice(&request.selection);
-//
-//             // todo handle asterrisk addresses
-//             // for address in &dtr.selection {
-//             //     if address.contains("*") {
-//             //         let addr = Address::from_str(address).unwrap();
-//             //         selected.extend(
-//             //             addr.expand(sim_instance)
-//             //                 .iter()
-//             //                 .map(|addr| addr.to_string()),
-//             //         );
-//             //     }
-//             // }
-//             for address in &selected {
-//                 let address = match Address::from_str(&address) {
-//                     Ok(a) => a,
-//                     Err(_) => continue,
-//                 };
-//                 if let Ok(var) = sim.get_var(&address) {
-//                     if var.is_float() {
-//                         data_pack
-//                             .floats
-//                             .insert(address.into(), *var.as_float().unwrap());
-//                     }
-//                 }
-//             }
-//
-//             let response = Message::DataTransferResponse(DataTransferResponse {
-//                 data: TransferResponseData::Typed(data_pack),
-//             });
-//             // client.connection.send_obj(response, None)?;
-//             Ok(())
-//         }
-//         // select using addresses but return data as ordered set without
-//         // address keys, order is stored on server under it's own unique id
-//         "SelectVarOrdered" => {
-//             let mut data = VarSimDataPackOrdered::default();
-//             let selection = &request.selection;
-//
-//             // empty selection means reuse last ordering
-//             if selection.is_empty() {
-//                 let order_id = 1;
-//                 let order = client.order_store.get(&order_id).unwrap();
-//                 for addr in order {
-//                     if let Ok(var) = sim.get_var(&addr) {
-//                         data.vars.push(var.clone());
-//                     }
-//                 }
-//                 let response = Message::DataTransferResponse(DataTransferResponse {
-//                     data: TransferResponseData::VarOrdered(order_id, data),
-//                 });
-//                 // client.connection.send_obj(response, None)?;
-//                 Ok(())
-//             } else {
-//                 let mut order = Vec::new();
-//
-//                 for query in selection {
-//                     if query.contains("*") {
-//                         for (id, entity) in &sim.entities {
-//                             if id == &0 || id == &1 {
-//                                 continue;
-//                             }
-//                             let _query = query.replace("*", &id.to_string());
-//                             let addr = Address::from_str(&_query)?;
-//                             order.push(addr.clone());
-//                             if let Ok(var) = sim.get_var(&addr) {
-//                                 data.vars.push(var.clone());
-//                             }
-//                         }
-//                     } else {
-//                         // TODO save the ordered list of addresses on the server for handling
-//                         // response
-//                         let addr = Address::from_str(query)?;
-//                         order.push(addr.clone());
-//                         if let Ok(var) = sim.get_var(&addr) {
-//                             data.vars.push(var.clone());
-//                         }
-//                     }
-//                 }
-//
-//                 let order_id = client
-//                     .order_id_pool
-//                     .request_id()
-//                     .ok_or(Error::Other("failed getting new order id".to_string()))?;
-//                 client.order_store.insert(order_id, order);
-//
-//                 let response = Message::DataTransferResponse(DataTransferResponse {
-//                     data: TransferResponseData::VarOrdered(order_id, data),
-//                 });
-//                 // client.connection.send_obj(response, None)?;
-//                 Ok(())
-//             }
-//         }
-//         _ => Err(Error::Unknown),
-//     }
-// }
 
 impl Server {
     /// Gets current clock value
     pub async fn get_clock(&mut self) -> Result<usize> {
-        if let rpc::worker::Response::Clock(clock) = self
+        let resp = self
             .worker
             .as_ref()
             .ok_or(Error::WorkerNotConnected("".to_string()))?
             .execute(Signal::from(rpc::worker::Request::Clock))
             .await?
-            .into_payload()
-        {
+            .into_payload();
+        if let rpc::worker::Response::Clock(clock) = resp {
             Ok(clock)
         } else {
-            unimplemented!()
+            Err(Error::UnexpectedResponse(resp.to_string()))
         }
     }
-
-    // /// Gets currently loaded scenario
-    // pub async fn get_scenario(&mut self) -> Result<Scenario> {
-    //     if let Response::Scenario(scenario) = self
-    //         .worker
-    //         .as_ref()
-    //         .ok_or(Error::WorkerNotConnected("".to_string()))?
-    //         .execute(Request::Scenario)
-    //         .await?
-    //     {
-    //         Ok(scenario)
-    //     } else {
-    //         unimplemented!()
-    //     }
-    // }
 }

@@ -8,10 +8,8 @@ use crate::{Error, Result};
 
 /// Attempts to process incoming advance request.
 ///
-/// # Process
-///
-/// This function will return a response back to calling client only after
-/// the cluster reaches the target clock value.
+/// NOTE: this function will return a response back to calling client only
+/// after the cluster reaches the target clock value.
 pub async fn handle_advance_request(
     server: Arc<Mutex<Server>>,
     req: AdvanceRequest,

@@ -16,12 +16,12 @@ use crate::{Error, Result};
 /// # Portability problems
 ///
 /// Some services may be unable to run on some architectures. At the same time
-/// they may be required for processing entities of certain types.
+/// they may be required for processing entities of certain compositions.
 ///
 /// One solution to this problem is tying specific services to certain entity
 /// types. As the runtime understands what services can be run on what
 /// machines, it can prevent spawning of certain types of entities on specific
-/// nodes.
+/// workers.
 ///
 /// Another solution is writing "non-local-only" services, that also mutate
 /// remote entities in addition to locally stored ones.
@@ -93,11 +93,11 @@ impl ManagedServiceType {
 
 /// Managed service connected as a client to local or remote server.
 ///
-/// # Managed service
+/// # What does `managed` mean?
 ///
-/// Service is monitored by it's parent process, who's collecting output and
-/// metrics, and checking if the service is alive. If a service process
-/// crashes, there will be an attempt to restart it.
+/// A managed service will be monitored by it's parent process, who's
+/// collecting output and metrics, and checking if the service is alive.
+/// If a service process crashes, there will be an attempt to restart it.
 ///
 /// # Services as clients
 ///

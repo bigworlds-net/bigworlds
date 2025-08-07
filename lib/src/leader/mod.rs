@@ -31,11 +31,9 @@ use crate::leader::manager::ManagerExec;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::rpc::leader::{Request, RequestLocal, Response};
 use crate::rpc::Caller;
-use crate::util_net::{decode, encode};
+use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId, WorkerRemoteExec};
 use crate::{model, net, query, rpc, string, worker, EntityId, EntityName, Model, QueryProduct};
-
-const LEADER_ADDRESS: &str = "0.0.0.0:5912";
 
 pub type LeaderId = Uuid;
 
@@ -54,12 +52,6 @@ pub struct Worker {
 
     /// List of known listeners the worker can be reached through.
     listeners: Vec<CompositeAddress>,
-
-    /// Information about worker synchronization situation. Workers with
-    /// attached servers can block processing of further steps if any of their
-    /// connected clients blocks.
-    pub is_blocking_step: bool,
-    pub furthest_agreed_step: usize,
 }
 
 impl Worker {
@@ -70,8 +62,6 @@ impl Worker {
             entities: vec![],
             exec,
             listeners: vec![],
-            is_blocking_step: false,
-            furthest_agreed_step: 0,
         }
     }
 }
@@ -557,8 +547,6 @@ async fn handle_network_request(
                 // TODO: fill in worker listeners with a subsequent request to
                 // the worker.
                 listeners: vec![],
-                is_blocking_step: false,
-                furthest_agreed_step: 0,
             };
             manager.add_worker(worker).await?;
 
@@ -629,8 +617,6 @@ async fn handle_request(
                 // with the request.
                 listeners: vec![address],
                 exec: WorkerExec::Remote(worker_remote_exec),
-                is_blocking_step: false,
-                furthest_agreed_step: 0,
             };
 
             if let rpc::worker::Response::IntroduceLeader { worker_id } = resp {

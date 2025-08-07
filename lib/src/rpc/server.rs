@@ -33,7 +33,6 @@ impl From<Request> for RequestLocal {
 pub enum Request {
     ConnectToWorker { address: CompositeAddress },
     Status,
-    // UploadProject(Project),
     Message(Message),
 
     Redirect,
@@ -47,9 +46,7 @@ pub enum Request {
 )]
 pub enum Response {
     Empty,
-    // uptime is counted in seconds
-    Status { uptime: usize },
-    UploadProject { success: bool },
+    Status { uptime_secs: u64, clients: u32 },
     ConnectToWorker { server_id: ServerId },
     IntroduceWorker(ServerId),
     Message(Message),

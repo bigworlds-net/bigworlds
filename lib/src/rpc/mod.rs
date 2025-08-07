@@ -20,9 +20,10 @@ pub mod behavior;
 #[cfg(feature = "machine")]
 pub mod machine;
 
-pub mod compat;
 pub mod msg;
 
+/// Listing of all possible callers. Includes cluster participants as well as
+/// any additional constructs able to issue calls.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Caller {
     Leader(LeaderId),
@@ -40,8 +41,9 @@ impl Caller {
             Self::Worker(id) => *id,
             Self::Server(id) => *id,
             Self::Client(id) => *id,
+            // NOTE: non-cluster-participants cannot be uniquely identified.
             Self::SimHandle => Uuid::nil(),
-            Self::Behavior => Uuid::nil(),
+            Self::Behavior => Uuid::max(),
         }
     }
 }
@@ -55,17 +57,27 @@ pub struct NetworkHop {
     pub delta_time: Duration,
 }
 
-/// Describes additional information about a procedure call.
+/// Describes additional information about the call as it passes through the
+/// cluster.
 ///
-/// Can be included alongside a regular request to provide information about
-/// the caller, the relay chain of the request as it went through the network,
-/// etc.
+/// Supplies information about the original caller, the relay chain of the
+/// request as it went through the network, timing information, etc.
+///
+/// # Context lifetime
+///
+/// The context is designed to be created at the original callsite and to
+/// travel alongside the payload, eventually making it back to the caller.
+///
+/// This way the caller as well as different participants processing an
+/// in-flight call can make informed judgements about routing, state of the
+/// network, etc.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Context {
-    /// Identifier of the calling party.
+    /// Identifier of the original calling party.
     pub origin: Caller,
     /// Explicit target of the call. This is not always defined, e.g. when
-    /// broadcasting to all participants.
+    /// broadcasting to all participants or when the call is not expected to
+    /// travel through the cluster.
     pub target: Option<Caller>,
 
     /// Date and time when the call was originally made.

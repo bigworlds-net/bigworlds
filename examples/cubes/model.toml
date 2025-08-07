@@ -38,4 +38,3 @@ name = "debug"
 
 [components.vars]
 "str:worker" = "unknown"
-
