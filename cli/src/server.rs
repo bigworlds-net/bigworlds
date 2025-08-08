@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use bigworlds::server;
 use clap::ArgMatches;
+use tokio_util::sync::CancellationToken;
 
 use bigworlds::leader;
 use bigworlds::net::CompositeAddress;
+use bigworlds::server;
 use bigworlds::worker;
-use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
     use clap::{builder::PossibleValue, Arg, Command};
@@ -15,15 +15,15 @@ pub fn cmd() -> clap::Command {
     Command::new("server")
         .about("Start a server")
         .long_about(
-            "Start a server. Server listens to incoming client connections \n\
-            and fulfills client requests, anything from data transfers to entity spawning.\n\n\
-            `server` subcommand allows for quickly starting either a local- or cluster-backed \n\
-            server. Simulation can be started with either a path to scenario or a snapshot.\n\n\
-            `bigworlds server -s ./scenarios/hello_world` \n    \
-            (starts a server backed by local simulation process, based on a selected scenario)\n\n\
-            NOTE: data sent between client and server is not encrypted, connection is not \n\
-            secure! Basic authentication methods are provided, but they are more of \n\
-            a convenience than a serious security measure.",
+            "Start a server. Server listens to incoming client connections\n\
+            and fulfills client requests, anything from data transfers to\n\
+            entity spawning.\n\n\
+            `server` subcommand allows for quickly starting either a local-\n\
+            or cluster-backed server. Simulation can be started with either\n\
+            a path to scenario or a snapshot.\n\n\
+            `bigworlds server -s ./scenarios/hello_world` \n\
+                (starts a server backed by local simulation process, based\n\
+                on a selected scenario)",
         )
         .display_order(21)
         .arg(Arg::new("path").value_name("path"))
@@ -111,7 +111,7 @@ pub fn cmd() -> clap::Command {
                 .short('w')
                 .help(
                     "List of known cluster workers' addresses, only applicable if \
-                `--leader`or `--cluster` option is also present",
+                `--leader` or `--cluster` option is also present",
                 )
                 .display_order(102)
                 .value_name("worker-addresses"),
@@ -132,7 +132,6 @@ pub fn cmd() -> clap::Command {
         )
 }
 
-/// Starts a server task.
 pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()> {
     let listeners_addrs_str = matches
         .get_many("listeners")
@@ -219,47 +218,17 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
         ..Default::default()
     };
 
-    // let worker_addrs = match matches.get_one::<String>("workers") {
-    //     Some(wstr) => wstr
-    //         .split(',')
-    //         .map(|s| s.to_string())
-    //         .collect::<Vec<String>>(),
-    //     None => Vec::new(),
-    // };
-
-    // spawn the cluster leader
+    // Spawn the cluster leader.
     let mut leader = leader::spawn(leader::Config::default(), cancel.clone())?;
 
-    // spawn the worker
+    // Spawn the worker.
     let mut worker = worker::spawn(worker::Config::default(), cancel.clone())?;
-    // initiate local connection to the leader
+    // Initiate local connection to the leader.
     leader.connect_to_local_worker(&worker, true).await?;
 
-    // spawn server
-    let mut server = bigworlds::server::spawn(config, worker.clone(), cancel.clone())?;
+    // Spawn the server.
+    let mut server = server::spawn(config, worker.clone(), cancel.clone())?;
     server.connect_to_worker(&worker, true).await?;
-
-    // // We can use server handle to send messages to the server, just as we
-    // // would over the network
-    // for n in 0..2 {
-    //     // let mut executor = server.executor.clone();
-    //     let server = server.clone();
-    //     tokio::spawn(async move {
-    //         println!("<< sending");
-    //         let response = server
-    //             .execute(
-    //                 StatusRequest {
-    //                     format: "".to_string(),
-    //                 }
-    //                 .into(),
-    //             )
-    //             .await
-    //             .unwrap();
-    //         println!(">> {:?}", response);
-    //     });
-    // }
-    //
-    // // TODO initialize services
 
     Ok(())
 }

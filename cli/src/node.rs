@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::ArgMatches;
+use tokio_util::sync::CancellationToken;
 
 use bigworlds::net::CompositeAddress;
 use bigworlds::node::{self, NodeConfig};
-use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
     use clap::{Arg, Command};
@@ -22,21 +22,6 @@ pub fn cmd() -> clap::Command {
                 .long("listeners")
                 .short('l')
                 .help("List of listener addresses")
-                .num_args(1..)
-                .value_name("address"),
-        )
-        .arg(
-            Arg::new("leader")
-                .long("leader")
-                .short('c')
-                .help("Address of the cluster leader to contact")
-                .value_name("address"),
-        )
-        .arg(
-            Arg::new("server")
-                .long("server")
-                .short('s')
-                .help("Establish a server at the level of the workplace")
                 .num_args(1..)
                 .value_name("address"),
         )

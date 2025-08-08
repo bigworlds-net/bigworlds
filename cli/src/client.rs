@@ -2,12 +2,15 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{Error, Result};
-use bigworlds::client::r#async::AsyncClient;
 use clap::ArgMatches;
-
-use bigworlds::client::{self, CompressionPolicy, WsClient};
-use bigworlds::net::{CompositeAddress, Transport};
 use tokio_util::sync::CancellationToken;
+
+use bigworlds::client::r#async::AsyncClient;
+use bigworlds::client::{self, CompressionPolicy};
+use bigworlds::net::{CompositeAddress, Transport};
+
+#[cfg(feature = "ws_client")]
+use bigworlds::client::WsClient;
 
 use crate::interactive;
 
@@ -95,7 +98,7 @@ pub fn cmd() -> clap::Command {
                 .long("transports")
                 .short('t')
                 .help("Supported transports that can be used when talking to server")
-                .default_value("tcp"),
+                .default_value("quic"),
         )
 }
 
@@ -116,46 +119,58 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
         },
         is_blocking: matches.get_flag("blocking"),
         compress: CompressionPolicy::from_str(matches.get_one::<String>("compress").unwrap())?,
-        // encodings: match matches.value_of("encodings") {
-        //     Some(encodings_str) => {
-        //         let split = encodings_str.split(',').collect::<Vec<&str>>();
-        //         let mut transports = Vec::new();
-        //         for transport_str in split {
-        //             if !transport_str.is_empty() {
-        //                 transports.push(transport_str.parse()?);
-        //             }
-        //         }
-        //         transports
-        //     }
-        //     None => Vec::new(),
-        // },
-        // transports: match matches.value_of("transports") {
-        //     Some(transports_str) => {
-        //         let split = transports_str.split(',').collect::<Vec<&str>>();
-        //         let mut transports = Vec::new();
-        //         for transport_str in split {
-        //             if !transport_str.is_empty() {
-        //                 transports.push(transport_str.parse()?);
-        //             }
-        //         }
-        //         transports
-        //     }
-        //     None => Vec::new(),
-        // },
+        encodings: match matches.get_one::<String>("encodings") {
+            Some(encodings_str) => {
+                let split = encodings_str.split(',').collect::<Vec<&str>>();
+                let mut transports = Vec::new();
+                for transport_str in split {
+                    if !transport_str.is_empty() {
+                        transports.push(transport_str.parse()?);
+                    }
+                }
+                transports
+            }
+            None => Vec::new(),
+        },
+        transports: match matches.get_one::<String>("transports") {
+            Some(transports_str) => {
+                let split = transports_str.split(',').collect::<Vec<&str>>();
+                let mut transports = Vec::new();
+                for transport_str in split {
+                    if !transport_str.is_empty() {
+                        transports.push(transport_str.parse()?);
+                    }
+                }
+                transports
+            }
+            None => Vec::new(),
+        },
     };
+
+    info!("Attempting client connection to: {}", addr);
+
     match addr.transport {
         Some(Transport::WebSocket) | Some(Transport::SecureWebSocket) => {
-            let client = WsClient::connect(addr, config).await?;
-            // let client = WsClient::connect_direct().await?;
-            interactive::start(
-                client,
-                matches
-                    .get_one::<String>("icfg")
-                    .unwrap_or(&interactive::config::CONFIG_FILE.to_string()),
-                None,
-                cancel.clone(),
-            )
-            .await;
+            #[cfg(feature = "ws_client")]
+            {
+                let client = WsClient::connect(addr, config).await?;
+                interactive::start(
+                    client,
+                    matches
+                        .get_one::<String>("icfg")
+                        .unwrap_or(&interactive::config::CONFIG_FILE.to_string()),
+                    None,
+                    cancel.clone(),
+                )
+                .await;
+            }
+            #[cfg(not(feature = "ws_client"))]
+            {
+                error!(
+                    "attempted to create a websocket client but the `ws_client` feature is not enabled"
+                );
+                cancel.cancel();
+            }
         }
         Some(Transport::Quic) | None => {
             let client = bigworlds::client::Client::connect(addr, config).await?;

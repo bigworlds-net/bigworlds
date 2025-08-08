@@ -150,7 +150,7 @@ pub async fn start(
 
             // Check if the client connection is still alive.
             if let Err(_) = client.is_alive().await {
-                println!("\nServer terminated the connection...");
+                error!("Server terminated the connection...");
                 break 'outer;
             };
 
@@ -214,10 +214,16 @@ pub async fn start(
                         let (cmd, args) = split_first_word(&line);
                         match cmd {
                             "" => {
-                                client.step(1).await?;
-                                // interface.set_prompt(
-                                //     create_prompt(&mut driver, &config).await?.as_str(),
-                                // )?;
+                                if let Err(bigworlds::Error::ErrorResponse(e)) =
+                                    client.step(1).await
+                                {
+                                    if e.contains("connection closed") {
+                                        error!("Server terminated the connection before step was processed...");
+                                        cancel.cancel();
+                                    } else {
+                                        warn!("Couldn't process step: {}", e);
+                                    }
+                                }
                             }
                             "run" => {
                                 do_run_loop = true;

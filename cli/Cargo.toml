@@ -14,11 +14,13 @@ name = "bigworlds"
 path = "src/main.rs"
 
 [features]
+default = ["ws_client"]
+ws_client = ["bigworlds/ws_transport"]
 archive = ["bigworlds/archive"]
 msgpack = ["bigworlds/msgpack_encoding"]
 
 [dependencies]
-bigworlds = { path = "../lib", version = "0.1.1" }
+bigworlds = { path = "../lib", version = "0.1.1", default-features = false }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-stream = "0.1"
