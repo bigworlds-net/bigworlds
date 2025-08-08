@@ -1,5 +1,6 @@
 mod cache;
 mod config;
+mod exec;
 mod handle;
 mod pov;
 mod stats;
@@ -11,6 +12,7 @@ mod grpc;
 mod http;
 
 pub use config::Config;
+pub use exec::ServerExec;
 pub use handle::Handle;
 
 use std::net::SocketAddr;
@@ -18,24 +20,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fnv::FnvHashMap;
-use id_pool::IdPool;
 use tokio::sync::mpsc::{self};
 use tokio::sync::{watch, Mutex};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::executor::{self, Executor, ExecutorMulti, LocalExec, Signal};
+use crate::executor::{Executor, ExecutorMulti, LocalExec, Signal};
 use crate::net::ConnectionOrAddress;
-use crate::net::{CompositeAddress, Encoding, Transport};
+use crate::net::{Encoding, Transport};
 use crate::rpc::msg::{self, DataPullRequest, Message, PullRequestData};
 use crate::rpc::server::{RequestLocal, Response};
-use crate::rpc::{Caller, Participant};
+use crate::rpc::Participant;
 use crate::service::Service;
 use crate::time::Instant;
 use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId};
-use crate::{net, rpc, string, worker, Address, Error, EventName, Query, QueryProduct, Result};
+use crate::{net, rpc, string, worker, Error, Result};
 
 use cache::Cache;
 use pov::{Client, Worker};
@@ -65,7 +66,7 @@ pub type ServerId = Uuid;
 /// Clients can be redirected to different servers based on their interest in
 /// particular entities and distance/latency incurred when querying those from
 /// a particular server.
-pub struct Server {
+pub struct State {
     pub id: ServerId,
 
     pub config: Config,
@@ -147,7 +148,7 @@ pub fn spawn(
     net::spawn_listeners(&listeners, net_client_executor, cancel.clone())?;
 
     // Create server state.
-    let mut server = Arc::new(Mutex::new(Server {
+    let mut server = Arc::new(Mutex::new(State {
         id: Uuid::new_v4(),
         worker: None,
         config,
@@ -360,7 +361,7 @@ pub fn spawn(
 async fn handle_local_ctl_request(
     req: rpc::server::RequestLocal,
     ctx: Option<rpc::Context>,
-    mut server: Arc<Mutex<Server>>,
+    mut server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     match req {
         rpc::server::RequestLocal::ConnectToWorker(server_worker, worker_server) => {
@@ -397,7 +398,7 @@ async fn handle_local_ctl_request(
 async fn handle_ctl_request(
     req: rpc::server::Request,
     ctx: Option<rpc::Context>,
-    mut server: Arc<Mutex<Server>>,
+    mut server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     use rpc::server::{Request as ServerRequest, Response as ServerResponse};
     match req {
@@ -420,7 +421,7 @@ async fn handle_ctl_request(
 async fn handle_local_worker_request(
     req: rpc::server::RequestLocal,
     ctx: Option<rpc::Context>,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     match req {
         rpc::server::RequestLocal::IntroduceWorker(server_worker) => {
@@ -447,7 +448,7 @@ async fn handle_worker_request(
     req: rpc::server::Request,
     ctx: Option<rpc::Context>,
     worker_id: Option<WorkerId>,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     debug!("server: handling worker request: {req}");
     match req {
@@ -465,7 +466,7 @@ async fn handle_worker_request(
 async fn handle_local_client_request(
     client_id: Option<ClientId>,
     msg: Message,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
 ) -> Result<Option<Message>> {
     handle_message(client_id, None, msg, server.clone(), None, None).await
 }
@@ -473,7 +474,7 @@ async fn handle_local_client_request(
 async fn handle_client_message(
     caller: ConnectionOrAddress,
     msg: Message,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
     resp_stream: Option<mpsc::Sender<Message>>,
 ) -> Result<Option<Message>> {
     let (encoding, client) = find_client_id(&caller, server.clone()).await?;
@@ -510,7 +511,7 @@ async fn handle_client_message(
 async fn handle_client_message_bytes(
     caller: ConnectionOrAddress,
     bytes: Vec<u8>,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
     resp_stream_bytes: Option<mpsc::Sender<Vec<u8>>>,
 ) -> Result<Option<Message>> {
     let (encoding, client) = find_client_id(&caller, server.clone()).await?;
@@ -544,7 +545,7 @@ async fn handle_message(
     client_id: Option<ClientId>,
     peer_addr: Option<SocketAddr>,
     msg: Message,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
     resp_stream: Option<mpsc::Sender<Message>>,
     resp_stream_bytes: Option<mpsc::Sender<Vec<u8>>>,
 ) -> Result<Option<Message>> {
@@ -811,7 +812,7 @@ async fn handle_message(
 // TODO: consider returning just the client id instead of a tuple.
 async fn find_client_id(
     caller: &ConnectionOrAddress,
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
 ) -> Result<(Encoding, Option<Client>)> {
     match &caller {
         ConnectionOrAddress::Address(addr) => {
@@ -863,7 +864,7 @@ async fn find_client_id(
     }
 }
 
-impl Server {
+impl State {
     /// Initializes services based on the available model.
     ///
     /// # New services with model changes
@@ -1050,7 +1051,7 @@ impl Server {
     }
 }
 
-impl Server {
+impl State {
     /// Gets current clock value
     pub async fn get_clock(&mut self) -> Result<usize> {
         let resp = self

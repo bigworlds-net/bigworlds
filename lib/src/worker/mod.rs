@@ -2,81 +2,56 @@ pub mod config;
 pub mod manager;
 pub mod part;
 
-use std::io::{ErrorKind, Write};
+mod exec;
+mod handle;
+mod pov;
+
+pub use config::Config;
+pub use exec::{WorkerExec, WorkerRemoteExec};
+pub use handle::Handle;
+
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use chrono::Utc;
-use futures::stream::FuturesUnordered;
-use tokio::sync::oneshot::Sender;
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
-use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{StreamExt, StreamMap};
+use tokio_stream::StreamExt;
 
-use deepsize::DeepSizeOf;
 use fnv::FnvHashMap;
-use id_pool::IdPool;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::behavior::BehaviorTarget;
-use crate::entity::Entity;
 use crate::error::Error;
 use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
+use crate::leader::{LeaderExec, LeaderRemoteExec};
 use crate::model::behavior::BehaviorInner;
-use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
-use crate::query::{self, process_query, Trigger};
+use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding};
+use crate::query::{self, Trigger};
 use crate::rpc::worker::{Request, RequestLocal, Response};
-use crate::rpc::{Caller, Participant};
-use crate::server::{self, ServerId};
+use crate::rpc::Participant;
+use crate::server::{ServerExec, ServerId};
 use crate::util::{decode, encode};
-use crate::{
-    behavior, leader, net, rpc, string, Address, CompName, EntityId, EntityName, Model, Query,
-    QueryProduct, Result, StringId, Var, VarType,
-};
-
-pub use crate::worker::manager::ManagerExec;
-pub use config::Config;
+use crate::worker::manager::ManagerExec;
+use crate::{behavior, leader, net, rpc, string, Model, Query, QueryProduct, Result};
 
 use part::Partition;
-
-pub type WorkerRemoteExec = RemoteExec<Signal<Request>, Result<Signal<Response>>>;
-pub type WorkerLocalExec = LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>;
-
-#[derive(Clone)]
-pub enum WorkerExec {
-    /// Remote executor for sending requests to worker over the wire.
-    Remote(WorkerRemoteExec),
-    /// Local executor for sending requests to worker within the same runtime.
-    Local(WorkerLocalExec),
-}
-
-impl std::fmt::Debug for WorkerExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("worker executor: ");
-        match self {
-            Self::Remote(r) => {
-                f.write_str("remote at: ")?;
-                write!(f, "{}", r.remote_address());
-            }
-            Self::Local(_) => {
-                f.write_str("local")?;
-            }
-        }
-        Ok(())
-    }
-}
+use pov::{Leader, LeaderSituation, OtherWorker, Server};
 
 /// Network-unique identifier for a single worker.
 pub type WorkerId = Uuid;
 
-pub struct WorkerState {
+#[derive(Clone)]
+pub struct Subscription {
+    pub id: Uuid,
+    pub triggers: Vec<query::Trigger>,
+    pub query: Query,
+    pub sender: mpsc::Sender<Result<Signal<Response>>>,
+}
+
+pub struct State {
     /// Integer identifier unique across the cluster.
     pub id: WorkerId,
 
@@ -117,303 +92,6 @@ pub struct WorkerState {
     pub clock_watch: (watch::Sender<usize>, watch::Receiver<usize>),
 
     pub subscriptions: Vec<Subscription>,
-}
-
-#[derive(Clone)]
-pub struct Subscription {
-    pub id: Uuid,
-    pub triggers: Vec<query::Trigger>,
-    pub query: Query,
-    pub sender: mpsc::Sender<Result<Signal<Response>>>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub enum LeaderSituation {
-    /// Default situation for a newly spawned worker that wasn't part of any
-    /// cluster yet.
-    ///
-    /// TODO: perhaps it should be possible for a worker to never be directly
-    /// connected to a leader. It could relay the leader messages via a remote
-    /// worker that it would be connected to.
-    #[default]
-    Never,
-    /// Active connection to the cluster leader.
-    Connected(Leader),
-    /// Previous leader was lost leading to workers holding election.
-    Election,
-    /// Lost leader while not being connected to any other cluster
-    /// participants. Currently waiting for incoming worker calls.
-    ///
-    /// NOTE: This situation will persist for some amount of time. During that
-    /// time it's possible that the worker will get contacted by remaining
-    /// cluster participants, or that it will be successful in reconnecting to
-    /// the leader at the same address it was exposed at before (e.g. leader
-    /// restarted). Alternativaly after the wait is over the worker will either
-    /// be shut down or spawn a new leader just for itself.
-    OrphanedWaiting,
-}
-
-#[derive(Clone, Debug)]
-pub struct Leader {
-    pub exec: LeaderExec,
-    pub worker_id: WorkerId,
-    pub listeners: Vec<CompositeAddress>,
-}
-
-pub type LeaderRemoteExec =
-    RemoteExec<Signal<rpc::leader::Request>, Result<Signal<rpc::leader::Response>>>;
-
-#[derive(Clone)]
-pub enum LeaderExec {
-    /// Remote executor for sending requests to leader over the wire.
-    Remote(LeaderRemoteExec),
-    /// Local executor for sending requests to leader within the same runtime.
-    Local(LocalExec<Signal<rpc::leader::RequestLocal>, Result<Signal<rpc::leader::Response>>>),
-}
-
-impl std::fmt::Debug for LeaderExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("leader executor: ");
-        match self {
-            Self::Remote(r) => {
-                f.write_str("remote at: ")?;
-                write!(f, "{}", r.remote_address());
-            }
-            Self::Local(_) => {
-                f.write_str("local")?;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl Executor<Signal<rpc::leader::Request>, Signal<rpc::leader::Response>> for Leader {
-    async fn execute(
-        &self,
-        sig: Signal<rpc::leader::Request>,
-    ) -> Result<Signal<rpc::leader::Response>> {
-        match &self.exec {
-            LeaderExec::Remote(remote_exec) => remote_exec.execute(sig).await?,
-            LeaderExec::Local(local_exec) => {
-                let sig = Signal::new(sig.payload.into(), sig.ctx);
-                local_exec
-                    .execute(sig)
-                    .await
-                    .map_err(|e| Error::Other(e.to_string()))?
-                    .map_err(|e| Error::Other(e.to_string()))
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Server {
-    pub worker_id: WorkerId,
-    pub server_id: ServerId,
-    pub exec: ServerExec,
-}
-
-/// Servers are attached to workers to handle distributing of data to
-/// clients.
-///
-/// Worker tracks associated servers. Worker can send requests to connected
-/// servers, for example telling them to reconnect to different worker.
-#[derive(Clone)]
-pub enum ServerExec {
-    /// Remote executor for sending requests to a server over the wire.
-    Remote(RemoteExec<Signal<rpc::server::Request>, Result<Signal<rpc::server::Response>>>),
-    /// Local executor for sending requests to a server within the same
-    /// runtime.
-    Local(LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>),
-}
-
-#[async_trait::async_trait]
-impl Executor<Signal<rpc::server::Request>, Signal<rpc::server::Response>> for Server {
-    async fn execute(
-        &self,
-        sig: Signal<rpc::server::Request>,
-    ) -> Result<Signal<rpc::server::Response>> {
-        match &self.exec {
-            ServerExec::Remote(remote_exec) => remote_exec.execute(sig.into()).await?,
-            ServerExec::Local(local_exec) => {
-                let sig = Signal::new(sig.payload.into(), sig.ctx);
-                local_exec
-                    .execute(sig)
-                    .await
-                    .map_err(|e| Error::Other(e.to_string()))?
-                    .map_err(|e| Error::Other(e.to_string()))
-            }
-        }
-    }
-}
-
-// TODO: track additional information about remote workers
-#[derive(Clone, Debug)]
-pub struct OtherWorker {
-    /// Local worker id.
-    pub local_id: WorkerId,
-
-    /// Globally unique uuid self-assigned by the other worker.
-    pub id: WorkerId,
-    /// Executor for directly passing request to the other worker.
-    pub exec: WorkerExec,
-}
-
-#[async_trait::async_trait]
-impl Executor<Request, Response> for OtherWorker {
-    async fn execute(&self, req: Request) -> Result<Response> {
-        match &self.exec {
-            WorkerExec::Remote(remote_exec) => remote_exec
-                .execute(
-                    Signal::from(req).originating_at(Participant::Worker(self.local_id).into()),
-                )
-                .await?
-                // Discard the context.
-                .map(|r| r.into_payload()),
-            WorkerExec::Local(local_exec) => local_exec
-                .execute(Signal::from(RequestLocal::Request(req)))
-                .await
-                .map_err(|e| Error::Other(e.to_string()))?
-                .map_err(|e| Error::Other(e.to_string()))
-                .map(|s| s.into_payload()),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Handle {
-    /// Controller executor, allowing control over the worker task.
-    pub ctl: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
-
-    /// Server executor for running requests coming from a local server.
-    pub server_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
-
-    /// Executor for running requests coming from a local leader.
-    pub leader_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
-
-    pub behavior_exec: LocalExec<Signal<Request>, Result<Signal<Response>>>,
-    pub behavior_broadcast: tokio::sync::broadcast::Sender<rpc::behavior::Request>,
-}
-
-impl Handle {
-    /// Connect the worker to another remote worker over a network using the
-    /// provided address.
-    pub async fn connect_to_worker(&self, address: &str) -> Result<()> {
-        let req: rpc::worker::RequestLocal =
-            rpc::worker::Request::ConnectToWorker(address.parse()?).into();
-        self.ctl.execute(Signal::from(req)).await??;
-        Ok(())
-    }
-
-    /// Connect the worker to a remote leader over a network using the provided
-    /// address.
-    pub async fn connect_to_leader(&self, address: &str) -> Result<()> {
-        let req: rpc::worker::RequestLocal =
-            rpc::worker::Request::ConnectToLeader(address.parse()?).into();
-        self.ctl.execute(Signal::from(req)).await??;
-        Ok(())
-    }
-
-    /// Connect the worker to a local leader task using the provided handle.
-    pub async fn connect_to_local_leader(&self, handle: &leader::Handle) -> Result<()> {
-        self.ctl
-            .execute(Signal::from(RequestLocal::ConnectToLeader(
-                handle.worker_exec.clone(),
-                self.leader_exec.clone(),
-            )))
-            .await??;
-
-        Ok(())
-    }
-
-    /// Connect the worker to another worker running on the same runtime.
-    pub async fn connect_to_local_worker(&self, worker_handle: &Handle) -> Result<()> {
-        self.ctl
-            .execute(Signal::from(RequestLocal::ConnectToWorker()))
-            .await??;
-
-        Ok(())
-    }
-
-    /// Connect the worker a server running on the same runtime.
-    pub async fn connect_to_local_server(&self, handle: &server::Handle) -> Result<()> {
-        self.ctl
-            .execute(Signal::from(RequestLocal::ConnectToServer(
-                handle.worker.clone(),
-                self.server_exec.clone(),
-            )))
-            .await??;
-
-        Ok(())
-    }
-
-    pub async fn entities(&self) -> Result<Vec<EntityName>> {
-        match self
-            .ctl
-            .execute(Signal::from(RequestLocal::Request(Request::EntityList)))
-            .await??
-            .into_payload()
-        {
-            Response::EntityList(list) => Ok(list),
-            _ => unimplemented!(),
-        }
-    }
-
-    pub async fn model(&self) -> Result<Model> {
-        match self
-            .ctl
-            .execute(Signal::from(RequestLocal::Request(Request::GetModel)))
-            .await??
-            .into_payload()
-        {
-            Response::GetModel(model) => Ok(model),
-            resp => Err(Error::UnexpectedResponse(resp.to_string())),
-        }
-    }
-
-    pub async fn query(&self, query: Query, caller: Option<Caller>) -> Result<QueryProduct> {
-        let caller = match caller {
-            Some(c) => c,
-            None => Participant::Worker(self.id().await?).into(),
-        };
-
-        match self
-            .ctl
-            .execute(
-                Signal::from(RequestLocal::Request(Request::ProcessQuery(query)))
-                    .originating_at(caller),
-            )
-            .await??
-            .into_payload()
-        {
-            Response::Query(product) => Ok(product),
-            resp => Err(Error::UnexpectedResponse(resp.to_string())),
-        }
-    }
-
-    pub async fn id(&self) -> Result<Uuid> {
-        match self
-            .ctl
-            .execute(Signal::from(RequestLocal::Request(Request::Status)))
-            .await??
-            .into_payload()
-        {
-            Response::Status {
-                id,
-                uptime,
-                worker_count,
-            } => Ok(id),
-            _ => unimplemented!(),
-        }
-    }
-
-    pub async fn shutdown(&self) -> Result<()> {
-        self.ctl
-            .execute(Signal::from(RequestLocal::Shutdown))
-            .await??;
-        Ok(())
-    }
 }
 
 /// Creates a new `Worker` task on the current runtime.
@@ -474,7 +152,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     let clock = watch::channel(0);
     let blocked = tokio::sync::watch::channel(false);
     let id = Uuid::new_v4();
-    let mut state = WorkerState {
+    let mut state = State {
         id,
         listeners: config.listeners.clone(),
         config,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::rpc::msg::*;
-use crate::server::{ClientId, Server};
+use crate::server::{ClientId, State};
 use crate::{Error, Result};
 
 /// Attempts to process incoming advance request.
@@ -11,7 +11,7 @@ use crate::{Error, Result};
 /// NOTE: this function will return a response back to calling client only
 /// after the cluster reaches the target clock value.
 pub async fn handle_advance_request(
-    server: Arc<Mutex<Server>>,
+    server: Arc<Mutex<State>>,
     req: AdvanceRequest,
     client_id: ClientId,
 ) -> Result<Message> {

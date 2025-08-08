@@ -21,6 +21,14 @@
 //! themselves, requesting node configuration to assess node fitness and to
 //! make sure it supports spawning leaders in the first place.
 
+mod config;
+mod handle;
+mod pov;
+
+pub use config::Config;
+pub use handle::Handle;
+pub use pov::RemoteNode;
+
 use std::net::SocketAddr;
 
 use fnv::FnvHashMap;
@@ -51,52 +59,8 @@ impl Permissions {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct NodeConfig {
-    pub listeners: Vec<CompositeAddress>,
-
-    pub single_threaded: bool,
-    pub max_memory: usize,
-    pub workers_per_thread: u16,
-
-    pub acl: FnvHashMap<String, Permissions>,
-}
-
-impl Default for NodeConfig {
-    fn default() -> Self {
-        let mut acl = FnvHashMap::default();
-        acl.insert("root".to_string(), Permissions::root());
-        Self {
-            listeners: vec![],
-            single_threaded: false,
-            max_memory: 1000,
-            workers_per_thread: 2,
-            acl,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct NodeHandle {
-    pub config: NodeConfig,
-    pub ctl: LocalExec<rpc::node::Request, Result<rpc::node::Response>>,
-}
-
-#[async_trait::async_trait]
-impl Executor<rpc::node::Request, rpc::node::Response> for NodeHandle {
-    async fn execute(&self, req: rpc::node::Request) -> Result<rpc::node::Response> {
-        self.ctl.execute(req).await?.map_err(|e| e.into())
-    }
-}
-
-#[derive(Clone)]
-pub struct RemoteNode {
-    pub exec: RemoteExec<rpc::node::Request, Result<rpc::node::Response>>,
-}
-
 #[derive(Clone, Default)]
-pub struct Node {
+pub struct State {
     pub workers: Vec<worker::Handle>,
     pub leaders: Vec<leader::Handle>,
     pub servers: Vec<server::Handle>,
@@ -112,7 +76,7 @@ pub struct Node {
 ///
 /// Request format is the same as with remote requests coming through the
 /// network listener.
-pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHandle> {
+pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     info!("spawning server task, listeners: {:?}", config.listeners);
 
     let (local_exec, mut local_stream, _) = LocalExec::new(20);
@@ -122,7 +86,7 @@ pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHa
 
     // Spawn the main handler task.
     tokio::spawn(async move {
-        let mut node = Node::default();
+        let mut node = State::default();
 
         let mut cancel_c = cancel.clone();
         loop {
@@ -152,7 +116,7 @@ pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHa
         }
     });
 
-    Ok(NodeHandle {
+    Ok(Handle {
         config,
         ctl: local_exec,
     })
@@ -160,7 +124,7 @@ pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHa
 
 fn handle_request(
     req: rpc::node::Request,
-    node: &mut Node,
+    node: &mut State,
     cancel: CancellationToken,
 ) -> Result<Response> {
     match req {

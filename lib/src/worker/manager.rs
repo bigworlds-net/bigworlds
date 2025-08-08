@@ -18,7 +18,7 @@ use crate::net::CompositeAddress;
 use crate::rpc::{Caller, Participant};
 use crate::server::ServerId;
 use crate::worker::part::Partition;
-use crate::worker::{Leader, LeaderSituation, Server, ServerExec, WorkerState};
+use crate::worker::{Leader, LeaderSituation, Server, ServerExec, State};
 use crate::{
     net, query, rpc, Address, EntityName, Error, Executor, Model, PrefabName, Query, QueryProduct,
     Result, Var,
@@ -321,7 +321,7 @@ impl ManagerExec {
     }
 }
 
-pub fn spawn(mut worker: WorkerState, cancel: CancellationToken) -> Result<ManagerExec> {
+pub fn spawn(mut worker: State, cancel: CancellationToken) -> Result<ManagerExec> {
     use tokio_stream::StreamExt;
 
     let (exec, mut stream, _) = LocalExec::new(32);
@@ -345,7 +345,7 @@ pub fn spawn(mut worker: WorkerState, cancel: CancellationToken) -> Result<Manag
     Ok(exec)
 }
 
-async fn handle_request(req: Request, mut worker: &mut WorkerState) -> Result<Response> {
+async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response> {
     trace!("worker[{}]: manager: handling request: {req}", worker.id);
     match req {
         Request::GetId => Ok(Response::GetId(worker.id)),

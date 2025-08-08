@@ -1,100 +1,58 @@
-#![allow(unused)]
-
+mod config;
+mod exec;
+mod handle;
 mod manager;
+mod pov;
 
-use std::borrow::Borrow;
-use std::collections::{HashMap, VecDeque};
-use std::io::Write;
-use std::net::{IpAddr, SocketAddr, TcpListener};
-use std::ops::DerefMut;
-use std::path::PathBuf;
+pub use config::Config;
+pub use exec::{LeaderExec, LeaderRemoteExec};
+pub use handle::Handle;
+
+use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
-use std::{io, thread};
 
 use chrono::{DateTime, Utc};
 use fnv::FnvHashMap;
-use id_pool::IdPool;
-use rand::SeedableRng;
-use tokio::sync::oneshot::Sender;
-use tokio::sync::{oneshot, Mutex};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-// use bigworlds::msg::{Message, MessageType};
 use crate::error::{Error, Result};
 use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
 use crate::leader::manager::ManagerExec;
-use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
+use crate::net::{ConnectionOrAddress, Encoding};
 use crate::rpc::leader::{Request, RequestLocal, Response};
 use crate::rpc::{Caller, Participant};
 use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId, WorkerRemoteExec};
-use crate::{model, net, query, rpc, string, worker, EntityId, EntityName, Model, QueryProduct};
+use crate::{model, net, query, rpc, Model, QueryProduct};
+
+use pov::Worker;
 
 pub type LeaderId = Uuid;
 
-/// Single worker as seen by the leader.
-#[derive(Clone, Debug)]
-pub struct Worker {
-    pub id: WorkerId,
-
-    /// Tracked list of entities that currently exist on the worker.
-    pub entities: Vec<EntityName>,
-
-    /// Executor abstracting over the transmission medium.
-    exec: WorkerExec,
-
-    /// List of known listeners the worker can be reached through.
-    listeners: Vec<CompositeAddress>,
+/// Information about the state of the leader itself.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Status {
+    /// Exact time when the leader was spawned.
+    pub started_at: DateTime<Utc>,
 }
 
-impl Worker {
-    pub fn new(id: WorkerId, exec: WorkerExec) -> Self {
+impl Status {
+    pub fn new() -> Self {
         Self {
-            id,
-            entities: vec![],
-            exec,
-            listeners: vec![],
+            started_at: Utc::now(),
         }
     }
 }
 
-#[async_trait::async_trait]
-impl Executor<Signal<rpc::worker::Request>, Signal<rpc::worker::Response>> for Worker {
-    async fn execute(
-        &self,
-        sig: Signal<rpc::worker::Request>,
-    ) -> Result<Signal<rpc::worker::Response>> {
-        match &self.exec {
-            WorkerExec::Remote(remote_exec) => {
-                remote_exec
-                    .execute(
-                        Signal::from(sig)
-                            .originating_at(Participant::Leader.into())
-                            .into(),
-                    )
-                    .await?
-            }
-            WorkerExec::Local(local_exec) => {
-                let sig = Signal::new(sig.payload.into(), sig.ctx);
-                local_exec
-                    .execute(sig)
-                    .await
-                    .map_err(|e| Error::Other(e.to_string()))?
-                    .map_err(|e| Error::Other(e.to_string()))
-            }
-        }
-    }
-}
-
-/// Leader holds simulation's central authority struct and manages
-/// a network of workers.
+/// Leader is authoritative on key cluster operations and shared data items
+/// such as the model. It manages a network of workers but is itself transient,
+/// and can be recreated.
 ///
-/// It doesn't hold any entity state, leaving that entirely to workers.
+/// Notably the leader doesn't hold any entity state, leaving that entirely to
+/// workers.
 pub struct State {
     pub id: LeaderId,
 
@@ -113,119 +71,6 @@ pub struct State {
     pub clock: usize,
 
     pub status: Status,
-}
-
-/// Information about the state of the leader itself.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Status {
-    /// Exact time when the leader was spawned.
-    pub started_at: DateTime<Utc>,
-}
-
-impl Status {
-    pub fn new() -> Self {
-        Self {
-            started_at: Utc::now(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Config {
-    pub listeners: Vec<CompositeAddress>,
-
-    /// Perform automatic stepping through the simulation, initiated on the
-    /// leader level.
-    pub autostep: Option<std::time::Duration>,
-
-    /// Policy for entity distribution. Most policies involve a dynamic process
-    /// of reassigning entities between workers to optimize for different
-    /// factors.
-    pub distribution: DistributionPolicy,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            listeners: vec![],
-            autostep: None,
-            distribution: DistributionPolicy::Random,
-        }
-    }
-}
-
-/// Execution handle for sending requests to leader.
-///
-/// # Worker identification
-///
-/// The executor implementation for this type must send a `worker_id` to
-/// identify with leader. This type stores a `worker_id` to use for
-/// subsequent requests.
-///
-/// We can also supply any other `worker_id` but then we must go through
-/// the `worker_exec` and not the executor implemented directly on
-/// `LeaderHandle`.
-#[derive(Clone)]
-pub struct Handle {
-    pub ctl: LocalExec<Signal<rpc::leader::RequestLocal>, Result<Signal<rpc::leader::Response>>>,
-
-    /// Worker executor for running requests coming from a local worker
-    pub worker_exec:
-        LocalExec<Signal<rpc::leader::RequestLocal>, Result<Signal<rpc::leader::Response>>>,
-    // pub worker_id: Option<WorkerId>,
-}
-
-#[async_trait::async_trait]
-impl Executor<Signal<rpc::leader::Request>, Result<Signal<rpc::leader::Response>>> for Handle {
-    async fn execute(
-        &self,
-        sig: Signal<rpc::leader::Request>,
-    ) -> Result<Result<Signal<rpc::leader::Response>>> {
-        let sig = Signal::new(sig.payload.into(), sig.ctx);
-        self.ctl.execute(sig).await.map_err(|e| e.into())
-    }
-}
-
-impl Handle {
-    /// Connects leader to remote worker.
-    pub async fn connect_to_remote_worker(&mut self, addr: CompositeAddress) -> Result<()> {
-        let req: RequestLocal = Request::ConnectToWorker(addr).into();
-        self.ctl.execute(Signal::from(req)).await??;
-        Ok(())
-    }
-
-    /// Connects leader to worker existing on the same runtime.
-    ///
-    /// It also makes sure to connect worker to leader. Local channel
-    /// communications are more difficult and we need to set things up both
-    /// ways.
-    pub async fn connect_to_local_worker(
-        &mut self,
-        worker_handle: &worker::Handle,
-        duplex: bool,
-    ) -> Result<()> {
-        // Issue this leader to reach out with a connection to the worker.
-        self.ctl
-            .execute(Signal::from(rpc::leader::RequestLocal::ConnectToWorker(
-                worker_handle.leader_exec.clone(),
-                self.worker_exec.clone(),
-            )))
-            .await??;
-
-        if duplex {
-            // Prompt the worker to connect to this leader as well.
-            worker_handle.connect_to_local_leader(self).await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn shutdown(&self) -> Result<()> {
-        self.ctl
-            .execute(Signal::from(RequestLocal::Shutdown))
-            .await??;
-        Ok(())
-    }
 }
 
 /// Spawns a `Leader` task on the current runtime.
@@ -252,7 +97,6 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     debug!("spawning leader task, listeners: {:?}", config.listeners);
 
     let autostep = config.autostep.clone();
-    // println!("autostep: {:?}", autostep);
     let mut state = State {
         id: Uuid::new_v4(),
         config,
