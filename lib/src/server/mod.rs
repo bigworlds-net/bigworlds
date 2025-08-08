@@ -1,3 +1,8 @@
+mod cache;
+mod config;
+mod handle;
+mod pov;
+mod stats;
 mod turn;
 
 #[cfg(feature = "grpc_server")]
@@ -27,194 +32,25 @@ use crate::service::Service;
 use crate::time::Instant;
 use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId};
-use crate::{net, rpc, string, worker, Address, Error, EventName, Query, Result};
+use crate::{net, rpc, string, worker, Address, Error, EventName, Query, QueryProduct, Result};
+
+use cache::Cache;
+pub use config::Config;
+pub use handle::Handle;
+use pov::{Client, Worker};
+use stats::Stats;
 
 /// Client identification also serving as an access token.
 pub type ClientId = Uuid;
 /// Server identification.
 pub type ServerId = Uuid;
 
-/// Connected client as seen by server.
-#[derive(Clone, Debug)]
-pub struct Client {
-    pub id: ClientId,
-
-    /// IP address of the client.
-    pub addr: Option<SocketAddr>,
-
-    /// Currently applied encoding as negotiated with the client.
-    pub encoding: Encoding,
-
-    /// Blocking client has to explicitly agree to let server continue stepping
-    /// forward, while non-blocking client is more of a passive observer.
-    pub is_blocking: bool,
-    /// Watch channel for specifying blocking conditions for the client.
-    /// Specifically it defines until what clock value the client is allowing
-    /// execution. `None` means the client is blocked.
-    pub unblocked_until: (watch::Sender<Option<usize>>, watch::Receiver<Option<usize>>),
-
-    /// Furthest simulation step client has announced it's ready to proceed to.
-    /// If this is bigger than the current step that client counts as
-    /// ready for processing to next common furthest step.
-    pub furthest_step: usize,
-
-    /// Client-specific keepalive value, if none server config value applies.
-    pub keepalive: Option<Duration>,
-    pub last_event: Instant,
-
-    /// Authentication pair used by the client.
-    pub auth_pair: Option<(String, String)>,
-    /// Self-assigned name.
-    pub name: String,
-}
-
-#[derive(Clone)]
-pub struct Worker {
-    pub exec: WorkerExec,
-    /// Unique self-assigned id, used for authenticating with worker.
-    pub server_id: ServerId,
-}
-
-#[async_trait::async_trait]
-impl Executor<Signal<rpc::worker::Request>, Signal<rpc::worker::Response>> for Worker {
-    async fn execute(
-        &self,
-        sig: Signal<rpc::worker::Request>,
-    ) -> Result<Signal<rpc::worker::Response>> {
-        match &self.exec {
-            WorkerExec::Remote(remote_exec) => {
-                remote_exec
-                    .execute(sig.originating_at(Participant::Server(self.server_id).into()))
-                    .await?
-            }
-            WorkerExec::Local(local_exec) => {
-                let sig = Signal::new(sig.payload.into(), sig.ctx);
-                local_exec
-                    .execute(sig)
-                    .await
-                    .map_err(|e| Error::Other(e.to_string()))?
-                    .map_err(|e| Error::Other(e.to_string()))
-            }
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl ExecutorMulti<Signal<rpc::worker::Request>, Result<Signal<rpc::worker::Response>>> for Worker {
-    async fn execute_to_multi(
-        &self,
-        sig: Signal<rpc::worker::Request>,
-    ) -> Result<executor::Receiver<Result<Signal<rpc::worker::Response>>>> {
-        match &self.exec {
-            WorkerExec::Remote(remote_exec) => {
-                remote_exec
-                    .execute_to_multi(
-                        sig.originating_at(Participant::Server(self.server_id).into()),
-                    )
-                    .await
-            }
-            WorkerExec::Local(local_exec) => {
-                let sig = Signal::new(sig.payload.into(), sig.ctx);
-                local_exec.execute_to_multi(sig).await
-            }
-        }
-    }
-}
-
-/// Configuration settings for server.
-#[derive(Clone)]
-pub struct Config {
-    pub listeners: Vec<CompositeAddress>,
-    /// Name of the server.
-    pub name: String,
-    /// Description of the server.
-    pub description: String,
-
-    /// Time since last traffic from any client until server is shutdown,
-    /// set to none to keep alive forever.
-    pub self_keepalive: Option<Duration>,
-    /// Time between polls in the main loop.
-    pub poll_wait: Duration,
-    /// Delay between polling for new incoming client connections.
-    pub accept_delay: Duration,
-
-    /// Time since last traffic from client until connection is terminated.
-    pub client_keepalive: Option<Duration>,
-    /// Compress outgoing messages
-    pub use_compression: bool,
-
-    /// Whether to require authorization of incoming clients.
-    pub require_auth: bool,
-    /// User and password pairs for client authorization.
-    pub auth_pairs: Vec<(String, String)>,
-
-    // TODO: additional configuration specific to the http adapter.
-    pub http: HttpConfig,
-
-    /// List of transports supported for client connections.
-    pub transports: Vec<Transport>,
-    /// List of encodings supported for client connections.
-    pub encodings: Vec<Encoding>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            listeners: vec![],
-
-            name: "".to_string(),
-            description: "".to_string(),
-            self_keepalive: None,
-            poll_wait: Duration::from_millis(1),
-            accept_delay: Duration::from_millis(200),
-
-            client_keepalive: Some(Duration::from_secs(4)),
-            use_compression: false,
-
-            require_auth: false,
-            auth_pairs: Vec::new(),
-
-            http: HttpConfig::default(),
-
-            transports: vec![
-                #[cfg(feature = "quic_transport")]
-                Transport::Quic,
-                #[cfg(feature = "ws_transport")]
-                Transport::WebSocket,
-            ],
-            encodings: vec![
-                Encoding::Bincode,
-                #[cfg(feature = "msgpack_encoding")]
-                Encoding::MsgPack,
-            ],
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct HttpConfig {}
-
-impl Default for HttpConfig {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-/// Connection entry point for clients.
+/// Server state.
 ///
 /// # Network interface overview
 ///
 /// Server's main job is keeping track of the connected `Client`s and handling
-/// any requests they may send it's way. It also provides a pipe-like, one-way
-/// communication for fast transport of queried data.
-///
-/// # Listening to client connections
-///
-/// Server exposes a single stable listener at a known port. Any clients that
-/// wish to connect have to send a proper request to that main address. The
-/// `accept` function is used to accept new incoming client connections.
-/// Here the client is assigned a unique id. Response includes a new address
-/// to which client should connect.
+/// any requests they may send it's way.
 ///
 /// # Runtime optimizations
 ///
@@ -231,10 +67,9 @@ impl Default for HttpConfig {
 pub struct Server {
     pub id: ServerId,
 
-    /// Server configuration
     pub config: Config,
 
-    /// Connection with an entry-point to the underlying simulation system
+    /// Entry-point to the cluster.
     pub worker: Option<Worker>,
 
     /// Map of all clients by their unique identifier.
@@ -242,72 +77,17 @@ pub struct Server {
 
     pub services: Vec<Service>,
 
-    /// Time of creation of this server
-    pub started_at: Instant,
+    pub cache: Cache,
+    pub stats: Stats,
 
-    /// Time since last message received
-    last_msg_time: Instant,
-    /// Time since last new client connection accepted
-    last_accept_time: Instant,
+    /// Time of creation of this server.
+    pub started_at: Instant,
 
     pub clock: (watch::Sender<usize>, watch::Receiver<usize>),
     pub blocked: (watch::Sender<u8>, watch::Receiver<u8>),
 }
 
-#[derive(Clone)]
-pub struct Handle {
-    pub ctl: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
-
-    pub client: LocalExec<(Option<ClientId>, rpc::msg::Message), rpc::msg::Message>,
-    pub client_id: Option<ClientId>,
-
-    pub worker: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
-    pub worker_id: Option<WorkerId>,
-    // TODO: return a list of listeners that were successfully established.
-    // pub listeners: Vec<CompositeAddress>,
-}
-
-#[async_trait::async_trait]
-impl Executor<Message, Message> for Handle {
-    async fn execute(&self, msg: Message) -> Result<Message> {
-        self.client
-            .execute((self.client_id, msg))
-            .await
-            .map_err(|e| e.into())
-    }
-}
-
-impl Handle {
-    /// Connects server to worker.
-    pub async fn connect_to_worker(
-        &mut self,
-        worker_handle: &worker::Handle,
-        duplex: bool,
-    ) -> Result<()> {
-        let mut _server_id = None;
-
-        // Connect server to worker.
-        if let rpc::server::Response::ConnectToWorker { server_id } = self
-            .ctl
-            .execute(Signal::from(rpc::server::RequestLocal::ConnectToWorker(
-                worker_handle.server_exec.clone(),
-                self.worker.clone(),
-            )))
-            .await??
-            .into_payload()
-        {
-            _server_id = Some(server_id);
-        }
-
-        if duplex {
-            worker_handle.connect_to_local_server(&self).await?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Spawns a new server using provided config.
+/// Spawns a new server using provided config and a worker handle.
 pub fn spawn(
     config: Config,
     mut worker_handle: worker::Handle,
@@ -368,10 +148,10 @@ pub fn spawn(
         worker: None,
         config,
         clients: Default::default(),
-        started_at: Instant::now(),
-        last_msg_time: Instant::now(),
-        last_accept_time: Instant::now(),
         services: vec![],
+        cache: Cache::default(),
+        stats: Stats::default(),
+        started_at: Instant::now(),
         clock: tokio::sync::watch::channel(0 as usize),
         blocked: tokio::sync::watch::channel(0),
     }));
@@ -812,16 +592,15 @@ async fn handle_message(
             // TODO: support transport and encoding negotiation.
             let client = Client {
                 id,
+                name: req.name,
                 addr: peer_addr,
                 encoding: Encoding::Bincode,
                 is_blocking: req.is_blocking,
                 // Set to `None` means client is blocking.
                 unblocked_until: watch::channel((!req.is_blocking).then_some(0)),
-                furthest_step: 0,
                 keepalive: None,
-                last_event: Instant::now(),
-                auth_pair: None,
-                name: req.name,
+                auth_token: None,
+                last_request: Instant::now(),
             };
 
             if client.is_blocking {
@@ -1028,16 +807,6 @@ async fn find_client_id(
     match &caller {
         ConnectionOrAddress::Address(addr) => {
             trace!("looking for client with addr: {addr}");
-            // trace!(
-            //     "all clients: {:?}",
-            //     server
-            //         .lock()
-            //         .await
-            //         .clients
-            //         .iter()
-            //         .map(|(_, c)| c.addr)
-            //         .collect::<Vec<_>>()
-            // );
             match server
                 .lock()
                 .await
