@@ -33,7 +33,7 @@ use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::rpc::node::{Request, Response};
 use crate::time::Duration;
 use crate::util::{decode, encode};
-use crate::{leader, net, rpc, server, worker, Error, Relay, RemoteExec, Result};
+use crate::{leader, net, rpc, server, worker, Error, RemoteExec, Result};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -113,18 +113,15 @@ pub struct Node {
 /// Request format is the same as with remote requests coming through the
 /// network listener.
 pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHandle> {
-    let (local_exec, mut local_stream, _) = LocalExec::new(20);
+    info!("spawning server task, listeners: {:?}", config.listeners);
 
+    let (local_exec, mut local_stream, _) = LocalExec::new(20);
     let (net_exec, mut net_stream, _) = LocalExec::new(20);
+
     net::spawn_listeners(&config.listeners, net_exec.clone(), cancel.clone())?;
 
-    // Spawn the chief handler task.
+    // Spawn the main handler task.
     tokio::spawn(async move {
-        // Processes incoming requests, e.g.:
-        // - spawn worker with such and such parameters and connect it to leader
-        // - return information on average worker load and number of workers
-        // - return some worker in serialized form for migration
-
         let mut node = Node::default();
 
         let mut cancel_c = cancel.clone();
@@ -139,8 +136,8 @@ pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHa
                         }
                     };
                     debug!("node: received net request: {:?}", req);
-                    // identify caller and check privileges
-                    //
+
+                    // Identify caller and check privileges.
 
                     let resp = handle_request(req, &mut node, cancel.clone());
                     s.send(encode(resp.map_err(|e| e.to_string()), Encoding::Bincode).unwrap());
@@ -154,11 +151,6 @@ pub fn spawn(config: NodeConfig, mut cancel: CancellationToken) -> Result<NodeHa
             };
         }
     });
-
-    // let handlers: Vec<WorkerHandle> = (0..config.workers_per_thread)
-    //     .into_iter()
-    //     .map(|n| crate::worker::spawn(runtime.clone(), cancel)?)
-    //     .collect();
 
     Ok(NodeHandle {
         config,
@@ -175,41 +167,27 @@ fn handle_request(
         Request::Status => Ok(Response::Status {
             worker_count: node.workers.len(),
         }),
-        Request::SpawnWorker(config) => {
-            println!("node: spawning worker");
-            let mut worker_handle = worker::spawn(config.clone(), cancel.clone())?;
+        Request::SpawnWorker(worker_config, server_config) => {
+            info!("node: spawning worker: {:?}", worker_config);
+            let mut worker_handle = worker::spawn(worker_config.clone(), cancel.clone())?;
             let server_exec = worker_handle.server_exec.clone();
             node.workers.push(worker_handle.clone());
 
-            // let addr = crate::net::get_available_address()?;
-
-            // let listeners = vec![format!("tcp://{}", addr.to_string()).parse()?];
-            // println!("spawn worker: listeners: {:?}", listeners);
-
-            // let server_handle = server::spawn(
-            //     server::Config {
-            //         listeners,
-            //         ..Default::default()
-            //     },
-            //     worker_handle.clone(),
-            //     cancel.clone(),
-            // )?;
-
-            // tokio::spawn(async move {
-            //     for req in initial_requests {
-            //         trace!("processing initial request: {:?}", req);
-            //         // unimplemented!();
-            //         // let resp = worker_handle.ctl_exec.execute(req.clone()).await.unwrap();
-            //         // trace!("success: resp: {:?}", resp);
-            //     }
-            // });
+            let mut server_listeners = vec![];
+            if let Some(config) = server_config {
+                info!("node: spawning worker-backed server: {:?}", config);
+                server_listeners.extend(config.listeners.clone());
+                let server_handle = server::spawn(config, worker_handle.clone(), cancel.clone())?;
+                node.servers.push(server_handle);
+            }
 
             Ok(rpc::node::Response::SpawnWorker {
-                listeners: config.listeners,
-                // server_addr: server_handle.listeners.first().cloned(),
+                worker_listeners: worker_config.listeners,
+                server_listeners,
             })
         }
         Request::SpawnLeader(config) => {
+            info!("node: spawning leader: {:?}", config);
             let leader_handle = leader::spawn(config.clone(), cancel.clone())?;
 
             // TODO: return a list of actually realized listeners

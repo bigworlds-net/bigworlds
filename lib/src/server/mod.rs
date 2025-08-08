@@ -10,6 +10,9 @@ mod grpc;
 #[cfg(feature = "http_server")]
 mod http;
 
+pub use config::Config;
+pub use handle::Handle;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +38,6 @@ use crate::worker::{WorkerExec, WorkerId};
 use crate::{net, rpc, string, worker, Address, Error, EventName, Query, QueryProduct, Result};
 
 use cache::Cache;
-pub use config::Config;
-pub use handle::Handle;
 use pov::{Client, Worker};
 use stats::Stats;
 
@@ -85,6 +86,8 @@ pub struct Server {
 
     pub clock: (watch::Sender<usize>, watch::Receiver<usize>),
     pub blocked: (watch::Sender<u8>, watch::Receiver<u8>),
+
+    cancel: CancellationToken,
 }
 
 /// Spawns a new server using provided config and a worker handle.
@@ -93,6 +96,8 @@ pub fn spawn(
     mut worker_handle: worker::Handle,
     mut cancel: CancellationToken,
 ) -> Result<Handle> {
+    info!("spawning server task, listeners: {:?}", config.listeners);
+
     let cancel = cancel.child_token();
 
     let (local_ctl_executor, mut local_ctl_stream, _) =
@@ -138,9 +143,8 @@ pub fn spawn(
     // Server operates multiple listeners, each on different transport.
     // Listeners run on separate tasks.
     // Once direct connection is established, encoding is negotiated.
-    net::spawn_listeners(&config.listeners, net_client_executor, cancel.clone())?;
-
-    info!("spawning server task, listeners: {:?}", config.listeners);
+    let listeners = config.listeners.clone();
+    net::spawn_listeners(&listeners, net_client_executor, cancel.clone())?;
 
     // Create server state.
     let mut server = Arc::new(Mutex::new(Server {
@@ -154,6 +158,7 @@ pub fn spawn(
         started_at: Instant::now(),
         clock: tokio::sync::watch::channel(0 as usize),
         blocked: tokio::sync::watch::channel(0),
+        cancel: cancel.clone(),
     }));
 
     // Spawn the blocking monitor task.
@@ -259,7 +264,6 @@ pub fn spawn(
                             Ok(Some(msg)) => msg,
                             Ok(None) => return,
                             Err(e) => {
-                                warn!("{:?}", e);
                                 Message::ErrorResponse(format!("{:?}", e))
                             }
                         };
@@ -326,7 +330,7 @@ pub fn spawn(
                     let server = server.clone();
                     tokio::spawn(async move {
                         let resp = handle_client_message(addr, msg, server, None).await;
-                        let resp = match resp {
+                        let resp: Result<Message> = match resp {
                             Ok(Some(msg)) => Ok(msg),
                             Ok(None) => return,
                             Err(e) => {
@@ -345,10 +349,11 @@ pub fn spawn(
     Ok(Handle {
         ctl: local_ctl_executor,
         client: local_client_executor,
-        // listeners,
         client_id: None,
         worker: local_worker_executor,
-        worker_id: None,
+        // TODO: only return addresses on which listeners were successfully
+        // established.
+        listeners,
     })
 }
 
@@ -654,10 +659,14 @@ async fn handle_message(
             .map(|msg| Some(msg)),
         Message::AdvanceRequest(req) => {
             debug!("server got step request: step_count {}", req.step_count);
+            let cancel = server.lock().await.cancel.clone();
 
-            let resp = turn::handle_advance_request(server, req, client_id).await;
-            debug!("server handled step request: {:?}", resp);
-            resp.map(|msg| Some(msg))
+            tokio::select! {
+                res = turn::handle_advance_request(server, req, client_id) => return res.map(|msg| Some(msg)),
+                _ = cancel.cancelled() => return Err(Error::Other("connection closed before step advance could be processed".to_owned())),
+            }
+            // let resp = debug!("server handled step request: {:?}", resp);
+            // resp.map(|msg| Some(msg))
         }
         Message::QueryRequest(q) => {
             let server_id = server.lock().await.id;

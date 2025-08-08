@@ -1,4 +1,5 @@
 use crate::executor::{Executor, LocalExec, Signal};
+use crate::net::CompositeAddress;
 use crate::rpc;
 use crate::rpc::msg::Message;
 use crate::server::{worker, ClientId};
@@ -8,14 +9,13 @@ use crate::Result;
 #[derive(Clone)]
 pub struct Handle {
     pub ctl: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
+    pub worker: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
 
     pub client: LocalExec<(Option<ClientId>, rpc::msg::Message), rpc::msg::Message>,
     pub client_id: Option<ClientId>,
 
-    pub worker: LocalExec<Signal<rpc::server::RequestLocal>, Result<Signal<rpc::server::Response>>>,
-    pub worker_id: Option<WorkerId>,
-    // TODO: return a list of listeners that were successfully established.
-    // pub listeners: Vec<CompositeAddress>,
+    /// List of listeners that were successfully established.
+    pub listeners: Vec<CompositeAddress>,
 }
 
 #[async_trait::async_trait]

@@ -82,6 +82,8 @@ pub enum Error {
 
     #[error("network error: {0}")]
     NetworkError(String),
+    #[error("connection closed")]
+    ConnectionClosed,
 
     #[error("quinn network error: {0}")]
     QuinnNetworkError(String),

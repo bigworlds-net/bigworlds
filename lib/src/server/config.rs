@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::net::{CompositeAddress, Encoding, Transport};
 
 /// Configuration settings for server.
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub listeners: Vec<CompositeAddress>,
     /// Name of the server.
@@ -29,9 +29,7 @@ pub struct Config {
     /// User and password pairs for client authorization.
     pub auth_pairs: Vec<(String, String)>,
 
-    // TODO: additional configuration specific to the http adapter.
     pub http: HttpConfig,
-
     pub cache: CacheConfig,
 
     /// List of transports supported for client connections.
@@ -75,7 +73,7 @@ impl Default for Config {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HttpConfig {}
 
 impl Default for HttpConfig {
@@ -84,7 +82,7 @@ impl Default for HttpConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CacheConfig {
     pub enabled: bool,
     pub entry_ttl_ms: u64,

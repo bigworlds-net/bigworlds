@@ -4,12 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::executor::LocalExec;
 use crate::net::CompositeAddress;
-use crate::{leader, rpc, worker, Result};
+use crate::{leader, rpc, server, worker, Result};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
     Status,
-    SpawnWorker(worker::Config),
+    /// Spawn a new worker. Optionally also spawn a worker-backed server.
+    SpawnWorker(worker::Config, Option<server::Config>),
     SpawnLeader(leader::Config),
 }
 
@@ -19,8 +20,8 @@ pub enum Response {
         worker_count: usize,
     },
     SpawnWorker {
-        listeners: Vec<CompositeAddress>,
-        // TODO: also optionally provide server address in the response.
+        worker_listeners: Vec<CompositeAddress>,
+        server_listeners: Vec<CompositeAddress>,
     },
     SpawnLeader {
         listeners: Vec<CompositeAddress>,

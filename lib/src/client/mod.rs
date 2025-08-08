@@ -1,28 +1,29 @@
-pub use r#async::AsyncClient;
-use tokio_stream::wrappers::ReceiverStream;
-use uuid::Uuid;
-#[cfg(feature = "ws_transport")]
-pub use ws::WsClient;
-
-use async_trait::async_trait;
-
-use crate::executor::ExecutorMulti;
-use crate::net::CompositeAddress;
-use crate::rpc::msg::{self, Message, PullRequestData};
-use crate::time::Duration;
-use crate::{query, Address, EntityName, Error, Model, PrefabName, RemoteExec, Result, Var};
-use crate::{Executor, Query, QueryProduct};
-
 pub mod r#async;
 
 #[cfg(feature = "ws_transport")]
 pub mod ws;
 
-/// Basic client based on the default remote executor interface (quic). Uses
-/// the standard `rpc::msg::Message`-based protocol.
+pub use r#async::AsyncClient;
+#[cfg(feature = "ws_transport")]
+pub use ws::WsClient;
+
+use async_trait::async_trait;
+use tokio_stream::wrappers::ReceiverStream;
+use uuid::Uuid;
+
+use crate::executor::ExecutorMulti;
+use crate::net::{CompositeAddress, Encoding, Transport};
+use crate::rpc::msg::{self, Message, PullRequestData};
+use crate::time::Duration;
+use crate::{query, Address, EntityName, Error, Model, PrefabName, RemoteExec, Result, Var};
+use crate::{Executor, Query, QueryProduct};
+
+/// Basic client based on the default remote executor interface based on the
+/// quic transport.
+///
+/// Uses the standard `rpc::msg::Message`-based protocol.
 #[derive(Clone)]
 pub struct Client {
-    #[allow(dead_code)]
     config: Config,
     exec: RemoteExec<Message, Message>,
 }
@@ -121,12 +122,17 @@ impl AsyncClient for Client {
     }
 
     async fn step(&mut self, step_count: u32) -> Result<()> {
-        self.execute(Message::AdvanceRequest(msg::AdvanceRequest {
-            step_count,
-            wait: true,
-        }))
-        .await?;
-        Ok(())
+        if let Message::ErrorResponse(e) = self
+            .execute(Message::AdvanceRequest(msg::AdvanceRequest {
+                step_count,
+                wait: true,
+            }))
+            .await?
+        {
+            Err(Error::ErrorResponse(e))
+        } else {
+            Ok(())
+        }
     }
 
     async fn query(&mut self, query: Query) -> Result<QueryProduct> {
@@ -164,33 +170,29 @@ impl AsyncClient for Client {
 /// Configuration settings for client.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Self-assigned name
+    /// Self-assigned name.
     pub name: String,
-    /// Whether to send regular heartbeats, and with what frequency
+    /// Whether to send regular heartbeats, and with what frequency.
     pub heartbeat_interval: Option<Duration>,
-    /// Blocking client requires server to wait for it's explicit step advance
+    /// Blocking client requires server to wait for it's explicit step advance.
     pub is_blocking: bool,
-    /// Compression policy for outgoing messages
+    /// Compression policy for outgoing messages.
     pub compress: CompressionPolicy,
-    // /// Supported encodings, first is most preferred
-    // pub encodings: Vec<Encoding>,
-    // /// Supported transports
-    // pub transports: Vec<Transport>,
-    // /// Should a separate thread be created for polling, or is polling going
-    // /// to be performed manually
-    // pub polling_thread: bool,
+    /// Supported encodings, first is most preferred.
+    pub encodings: Vec<Encoding>,
+    /// Supported transports, first is most preferred.
+    pub transports: Vec<Transport>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            name: "default_client".to_string(),
+            name: "default".to_string(),
             heartbeat_interval: Some(Duration::from_secs(1)),
             is_blocking: false,
-            compress: CompressionPolicy::OnlyDataTransfers,
-            // encodings: vec![Encoding::Bincode],
-            // transports: vec![Transport::Tcp],
-            // polling_thread: true,
+            compress: CompressionPolicy::Nothing,
+            encodings: vec![Encoding::Bincode],
+            transports: vec![Transport::Quic],
         }
     }
 }
@@ -198,13 +200,13 @@ impl Default for Config {
 /// List of available compression policies for outgoing messages.
 #[derive(Debug, Clone)]
 pub enum CompressionPolicy {
-    /// Compress all outgoing traffic
+    /// Compress all outgoing traffic.
     Everything,
-    /// Only compress messages larger than given size in bytes
+    /// Only compress messages larger than given size in bytes.
     LargerThan(usize),
-    /// Only compress data-heavy messages
-    OnlyDataTransfers,
-    /// Don't use compression
+    /// Only compress data-heavy query results.
+    OnlyQueryProducts,
+    /// Don't use compression.
     Nothing,
 }
 
@@ -219,7 +221,7 @@ impl CompressionPolicy {
         }
         let c = match s {
             "all" | "everything" => Self::Everything,
-            "data" | "only_data" => Self::OnlyDataTransfers,
+            "data" | "only_data" => Self::OnlyQueryProducts,
             "none" | "nothing" => Self::Nothing,
             _ => {
                 return Err(Error::Other(format!(

@@ -6,7 +6,6 @@ use std::sync::Arc;
 use futures::TryFutureExt;
 use integer_encoding::VarIntWriter;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
-use smallvec::SmallVec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;

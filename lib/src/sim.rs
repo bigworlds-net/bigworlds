@@ -685,7 +685,10 @@ impl AsyncClient for SimClient {
         if let Some(server) = &self.0.server {
             server
                 .client
-                .execute_to_multi((None, Message::SubscribeRequest(triggers, query)))
+                .execute_to_multi((
+                    Some(Uuid::nil()),
+                    Message::SubscribeRequest(triggers, query),
+                ))
                 .await
         } else {
             Err(Error::Other(

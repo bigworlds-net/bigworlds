@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use byteorder::WriteBytesExt;
-use integer_encoding::{FixedInt, VarIntAsyncReader, VarIntReader, VarIntWriter};
+use integer_encoding::{FixedInt, VarIntReader, VarIntWriter};
 use serde::de::DeserializeOwned;
-use smallvec::SmallVec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
@@ -286,19 +285,12 @@ impl<IN: Send + Sync + serde::Serialize, OUT: Send + Sync + serde::de::Deseriali
             .open_bi()
             .await
             .map_err(|e| Error::QuinnNetworkError(e.to_string()))?;
-        // let mut buf = SmallVec::<[u8; 128]>::new();
-
-        // Signify this is a streaming response call.
-        // buf.as_mut_slice().write_u8(1)?;
-
-        // Write the message into the buffer.
-        // bincode::serialize_into(buf.as_mut_slice(), &msg)?;
-        // let msg = bincode::serialize(&msg)?;
-        // buf.extend(msg);
 
         let msg = bincode::serialize(&msg)?;
 
+        // Signify this is a streaming response call.
         send.write_u8(1).await?;
+        // Write the message into the buffer.
         send.write_all(&msg)
             .await
             .map_err(|e| Error::QuinnNetworkError(e.to_string()))?;
