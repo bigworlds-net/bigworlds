@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     // Set up multiple nodes across separate threads, each with it's own tokio
     // runtime. Each node spawns a worker listening at a known address.
 
-    // node_0
+    // Spawn node#0.
     std::thread::spawn(|| {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -54,20 +54,23 @@ async fn main() -> anyhow::Result<()> {
 
         runtime.block_on(async move {
             let mut node = node::spawn(NodeConfig::default(), cancel.clone()).unwrap();
-            node.execute(rpc::node::Request::SpawnWorker(worker::Config {
-                listeners: vec!["quic://127.0.0.1:9910".parse().unwrap()],
-                ..Default::default()
-            }))
+            node.execute(rpc::node::Request::SpawnWorker(
+                worker::Config {
+                    listeners: vec!["quic://127.0.0.1:9910".parse().unwrap()],
+                    ..Default::default()
+                },
+                None,
+            ))
             .await
             .unwrap();
-            println!("node_0 running");
+            println!("node#0 running");
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         })
     });
 
-    // node_1
+    // Spawn node#1.
     std::thread::spawn(|| {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -78,13 +81,16 @@ async fn main() -> anyhow::Result<()> {
 
         runtime.block_on(async move {
             let mut node = node::spawn(NodeConfig::default(), cancel.clone()).unwrap();
-            node.execute(rpc::node::Request::SpawnWorker(worker::Config {
-                listeners: vec!["quic://127.0.0.1:9911".parse().unwrap()],
-                ..Default::default()
-            }))
+            node.execute(rpc::node::Request::SpawnWorker(
+                worker::Config {
+                    listeners: vec!["quic://127.0.0.1:9911".parse().unwrap()],
+                    ..Default::default()
+                },
+                None,
+            ))
             .await
             .unwrap();
-            println!("node_1 running");
+            println!("node#1 running");
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -106,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("leader connected to remote worker 9911");
 
+    // Set the model on the leader.
     leader
         .execute(Signal::from(rpc::leader::Request::ReplaceModel(
             common::model(),

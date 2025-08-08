@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut behaviors = vec![];
 
-    for _ in 0..3 {
+    for n in 0..2 {
         let cancel = cancel.clone();
         // Spawn nested simulation instance accessible only to
         // the behavior.
@@ -39,6 +39,25 @@ async fn main() -> anyhow::Result<()> {
         // nested simulation state would require serializing it into bytes and
         // storing as a variable.
         let mut nested_sim = sim.fork().await?;
+
+        // Leave only one cube entity per nested sim instance.
+        nested_sim.remove_entity("cube_1").await?;
+        nested_sim.remove_entity("cube_2").await?;
+
+        // Insert a custom event per nested simulation instance.
+
+        // Modify the behaviors per nested simulation instance.
+        let mut model = nested_sim.get_model().await?;
+        model.behaviors.iter_mut().for_each(|b| {
+            if let bigworlds::model::behavior::BehaviorInner::Lua { script, .. } = &mut b.inner {
+                *script = format!(r#"print("hello from nested model #{} !")"#, n);
+            }
+        });
+        nested_sim.pull_model(model).await?;
+
+        let nested_event = format!("nested_event_{}", n);
+        let nested_event_ = nested_event.clone();
+
         let behavior = sim
             // Spawn top-level behavior.
             .spawn_behavior_synced(
@@ -65,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
 
                         assert_eq!(nested_sim.entities().await?.iter().any(|e| e.as_str() == cube_name), true);
 
+
                         loop {
                             tokio::select! {
                                 Some((sig, s)) = stream.next() => {
@@ -72,8 +92,11 @@ async fn main() -> anyhow::Result<()> {
                                         rpc::behavior::Request::Event(event) => {
                                             println!("behavior: received trigger: {event}");
                                             match event.as_str() {
-                                                "step" => nested_sim.step_by(10).await?,
-                                                _ => (),
+                                                "step" => nested_sim.step_by(2).await?,
+                                                s => if s == nested_event_.as_str() {
+                                                    nested_sim.invoke("step").await?;
+                                                    println!("nested_sim_{}: received custom event", n);
+                                                },
                                             }
                                             let _ = s.send(Ok(Signal::new(rpc::behavior::Response::Empty, sig.ctx)));
                                         },
@@ -97,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                     })
                 },
                 BehaviorTarget::Worker,
-                vec!["step".parse()?],
+                vec!["step".parse()?, nested_event.parse()?],
             )
             .await?;
         behaviors.push(behavior);
@@ -105,12 +128,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("behaviors spawned");
 
-    // let r = behaviors[0]
-    //     .execute(Signal::from(rpc::behavior::Request::Event(
-    //         "custom_event0".parse()?,
-    //     )))
-    //     .await??;
-    // println!("behavior: custom event trigger sent, response: {r:?}");
+    // With some additional setup we can pass custom events to the nested sims
+    // from the top level sim handle.
+    //
+    // In this case we're calling a custom event defined for only one of the
+    // spawned behaviors. When the behavior receives the event it will itself
+    // invoke a `step` event on the nested it's hoolding.
+    sim.invoke("nested_event_0").await?;
 
     sim.step().await?;
     sim.step().await?;
