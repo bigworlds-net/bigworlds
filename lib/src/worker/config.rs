@@ -4,8 +4,6 @@ use crate::net::CompositeAddress;
 pub struct Config {
     pub listeners: Vec<CompositeAddress>,
 
-    pub addr: Option<String>,
-
     /// Topology strategy for the worker to follow.
     pub topo_strategy: TopoStrategy,
 
@@ -54,7 +52,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listeners: vec![],
-            addr: None,
             topo_strategy: Default::default(),
             orphan_fork: true,
             behaviors_follow_model_changes: true,

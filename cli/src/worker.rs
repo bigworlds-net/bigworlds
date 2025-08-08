@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::ArgMatches;
+use tokio_util::sync::CancellationToken;
 
 use bigworlds::{leader, net::CompositeAddress, rpc, server, worker, Executor};
-use tokio_util::sync::CancellationToken;
 
 pub fn cmd() -> clap::Command {
     use clap::{Arg, Command};
@@ -88,7 +88,6 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
     // Create worker configuration.
     let config = worker::Config {
         listeners,
-        addr: matches.get_one::<String>("address").cloned(),
         max_ram_mb: matches.get_one::<usize>("max_ram").unwrap_or(&0).to_owned(),
         max_disk_mb: matches
             .get_one::<usize>("max_disk")

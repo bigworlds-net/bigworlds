@@ -3,7 +3,7 @@ use clap::ArgMatches;
 use tokio_util::sync::CancellationToken;
 
 use bigworlds::net::CompositeAddress;
-use bigworlds::node::{self, NodeConfig};
+use bigworlds::node;
 
 pub fn cmd() -> clap::Command {
     use clap::{Arg, Command};
@@ -39,7 +39,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
         })
         .unwrap_or(vec![CompositeAddress::available()?]);
 
-    let config = NodeConfig {
+    let config = node::Config {
         listeners,
         ..Default::default()
     };

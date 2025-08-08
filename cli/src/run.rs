@@ -19,7 +19,7 @@ pub fn cmd() -> clap::Command {
     use clap::{Arg, ArgAction, Command};
 
     Command::new("run")
-        .about("Run a new world")
+        .about("Run a new world locally")
         .display_order(20)
         .long_about(
             "Start a new simulation run from a provided model.\n\
