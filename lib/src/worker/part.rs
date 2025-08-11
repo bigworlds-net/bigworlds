@@ -29,8 +29,10 @@ use super::WorkerId;
 /// It contains both data in the form of entities themselves and handles to
 /// local logic executing tasks.
 pub struct Partition {
-    /// Map of live entities.
+    /// Live entities currently stored in memory.
     pub entities: FnvHashMap<EntityName, Entity>,
+    /// FS-backed entity cold-storage.
+    pub cold_storage: fjall::Partition,
 
     /// Handles to synced behaviors.
     pub behaviors: FnvHashMap<BehaviorTarget, Vec<BehaviorHandle>>,
@@ -61,9 +63,12 @@ impl Partition {
             Signal<rpc::worker::Request>,
             Result<Signal<rpc::worker::Response>>,
         >,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             entities: FnvHashMap::default(),
+            cold_storage: fjall::Config::new("")
+                .open()?
+                .open_partition("entities", fjall::PartitionCreateOptions::default())?,
             #[cfg(feature = "machine")]
             machines: Default::default(),
             behaviors: FnvHashMap::default(),
@@ -71,7 +76,7 @@ impl Partition {
             behavior_exec,
             #[cfg(feature = "behavior_dynlib")]
             libs: vec![],
-        }
+        })
     }
 
     /// Initializes a worker partition using the given model.
@@ -82,17 +87,8 @@ impl Partition {
             Result<Signal<rpc::worker::Response>>,
         >,
     ) -> Result<Self> {
-        // Construct the partition.
-        let mut part = Partition {
-            entities: FnvHashMap::default(),
-            #[cfg(feature = "machine")]
-            machines: Default::default(),
-            behaviors: FnvHashMap::default(),
-            behavior_broadcast: tokio::sync::broadcast::channel(20),
-            behavior_exec: behavior_exec.clone(),
-            #[cfg(feature = "behavior_dynlib")]
-            libs: Vec::new(),
-        };
+        // Create the new partition object.
+        let mut part = Partition::new(behavior_exec.clone())?;
 
         // Initialize non-entity-bound behaviors.
         behavior::spawn_non_entity_bound(model, &mut part, behavior_exec);
@@ -165,11 +161,43 @@ impl Partition {
             BehaviorTarget::Entity(name_) => &name != name_,
             _ => true,
         });
+
+        // Check if the entity is present in memory or if it's currently in
+        // cold storage.
         if self.entities.remove(&name).is_some() {
+            Ok(())
+        } else if self.cold_storage.remove(&name).is_ok() {
             Ok(())
         } else {
             Err(Error::FailedGettingEntityByName(name))
         }
+    }
+
+    /// Put long-unaccessed entities into cold-storage.
+    pub fn archive_entities(&mut self) -> Result<()> {
+        let mut to_archive = vec![];
+        for (name, entity) in &self.entities {
+            if let Some(last_access) = entity.meta.last_access {
+                if last_access
+                    .signed_duration_since(chrono::Utc::now())
+                    .num_seconds()
+                    > 5
+                {
+                    to_archive.push(name.to_owned());
+                }
+            } else {
+                // If the entity was never accessed archive it immediately.
+                to_archive.push(name.to_owned());
+            }
+        }
+        for entity_name in to_archive {
+            if let Some(entity) = self.entities.remove(&entity_name) {
+                self.cold_storage
+                    .insert(entity_name, bincode::serialize(&entity).unwrap())?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Serialize partition's entity data to a vector of bytes.

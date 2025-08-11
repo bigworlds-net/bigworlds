@@ -164,7 +164,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
         blocked_watch: blocked,
         clock_watch: clock,
         model: None,
-        part: Some(Partition::new(local_behavior_executor.clone())),
+        part: Some(Partition::new(local_behavior_executor.clone())?),
         subscriptions: vec![],
     };
 

@@ -43,6 +43,8 @@ pub struct Entity {
 pub struct EntityMeta {
     /// Time at which the entity was moved to the current worker.
     pub last_moved: Option<DateTime<Utc>>,
+    /// Tracks last access time.
+    pub last_access: Option<DateTime<Utc>>,
 }
 
 impl Entity {

@@ -71,6 +71,7 @@ toml = { version = "0.5", features = ["preserve_order"] }
 rkyv = { version = "0.7", features = ["validation"], optional = true }
 bytecheck = "0.6"
 strum = { version = "0.26", features = ["derive"] }
+fjall = "2.11.2"
 
 byteorder = "1"
 bytes = "1"

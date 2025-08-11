@@ -180,6 +180,15 @@ pub enum Error {
 
     #[error("string too long: {0}")]
     StringTooLong(String),
+
+    #[error("fjall storage error: {0}")]
+    FjallError(String),
+}
+
+impl From<fjall::Error> for Error {
+    fn from(e: fjall::Error) -> Self {
+        Self::FjallError(e.to_string())
+    }
 }
 
 impl From<arrayvec::CapacityError> for Error {
