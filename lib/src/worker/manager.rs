@@ -3,7 +3,7 @@
 
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fnv::FnvHashMap;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -42,6 +42,15 @@ impl ManagerExec {
         let resp = self.execute(Request::GetConfig).await??;
         if let Response::GetConfig(config) = resp {
             Ok(config)
+        } else {
+            Err(Error::UnexpectedResponse(resp.to_string()))
+        }
+    }
+
+    pub async fn pull_config(&self, config: Config) -> Result<()> {
+        let resp = self.execute(Request::PullConfig(config)).await??;
+        if let Response::Empty = resp {
+            Ok(())
         } else {
             Err(Error::UnexpectedResponse(resp.to_string()))
         }
@@ -324,7 +333,7 @@ impl ManagerExec {
 pub fn spawn(mut worker: State, cancel: CancellationToken) -> Result<ManagerExec> {
     use tokio_stream::StreamExt;
 
-    let (exec, mut stream, _) = LocalExec::new(32);
+    let (exec, mut stream, _) = LocalExec::new(1);
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -333,6 +342,16 @@ pub fn spawn(mut worker: State, cancel: CancellationToken) -> Result<ManagerExec
                     let resp = handle_request(req, &mut worker).await;
                     snd.send(resp);
                 },
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    let now = Instant::now();
+                    if let Some(ref mut part) = worker.part {
+                        match part.archive_entities() {
+                            Ok(count) => println!("archived {} entities, took: {}ms", count, now.elapsed().as_millis()),
+                            Err(e) => warn!("entity archival chore failed: {}", e),
+                        }
+                    }
+
+                }
                 _ = cancel.cancelled() => {
                     debug!("worker[{}]: manager: shutting down", worker.id);
                     handle_request(Request::Shutdown, &mut worker).await;
@@ -350,6 +369,14 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
     match req {
         Request::GetId => Ok(Response::GetId(worker.id)),
         Request::GetConfig => Ok(Response::GetConfig(worker.config.clone())),
+        Request::PullConfig(config) => {
+            if let Some(part) = &mut worker.part {
+                part.config = config.partition.clone();
+            }
+            worker.config = config;
+
+            Ok(Response::Empty)
+        }
         // TODO: consider a separate request for getting leader or err,
         // instead of returning the whole leader situation enum.
         Request::GetLeader => Ok(Response::GetLeader(worker.leader.clone())),
@@ -374,8 +401,8 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
         }
         Request::GetServers => Ok(Response::GetServers(worker.servers.clone())),
         Request::GetEntity(name) => {
-            if let Some(part) = &worker.part {
-                if let Some(entity) = part.entities.get(&name) {
+            if let Some(part) = &mut worker.part {
+                if let Ok(entity) = part.get_entity(&name) {
                     Ok(Response::Entity(entity.to_owned()))
                 } else {
                     Err(Error::FailedGettingEntityByName(name))
@@ -388,12 +415,20 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
         }
         Request::GetEntities => {
             if let Some(part) = &worker.part {
-                Ok(Response::Entities(
-                    part.entities
+                let mut entities = part
+                    .entities
+                    .iter()
+                    .map(|(k, _)| k.to_owned())
+                    .collect::<Vec<EntityName>>();
+
+                // TODO: include archived entities conditionally.
+                entities.extend(
+                    part.archive
                         .iter()
-                        .map(|(k, _)| k.to_owned())
-                        .collect::<Vec<EntityName>>(),
-                ))
+                        .map(|k| EntityName::from_utf8(k.unwrap().0.to_vec()).unwrap()),
+                );
+
+                Ok(Response::Entities(entities))
             } else {
                 Err(Error::WorkerNotInitialized(
                     "Partition not available".to_string(),
@@ -496,9 +531,10 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 // is stored on the partition. It's still not clear, but
                 // perhaps the channel should live higher up on the worker
                 // state instead.
-                let old_part = worker
-                    .part
-                    .replace(Partition::from_model(model, behavior_exec).await?);
+                let old_part = worker.part.replace(
+                    Partition::from_model(model, behavior_exec, worker.config.partition.clone())
+                        .await?,
+                );
                 if let Some(old_part) = old_part {
                     worker.part.as_mut().unwrap().behavior_broadcast = old_part.behavior_broadcast;
                 }
@@ -613,15 +649,29 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                     if let Some(entity) = part.entities.get_mut(&address.entity) {
                         entity
                             .storage
-                            .set_from_var(&address.to_local(), var.clone())?;
+                            .set_from_var(&address.to_local(), var.clone())?
                     }
+                    // if let Ok(mut entity) = part.get_entity(&address.entity) {
+                    //     let entity_id = address.entity.clone();
+                    //     entity
+                    //         .storage
+                    //         .set_from_var(&address.to_local(), var.clone())?;
+                    //     part.archive
+                    //         .insert(
+                    //             entity_id,
+                    //             rkyv::to_bytes::<rkyv::rancor::Error>(entity)
+                    //                 .unwrap()
+                    //                 .as_slice(),
+                    //         )
+                    //         .unwrap();
+                    // }
                 }
             }
             Ok(Response::Empty)
         }
         Request::GetVar(address) => {
-            if let Some(part) = &worker.part {
-                if let Some(entity) = part.entities.get(&address.entity) {
+            if let Some(part) = &mut worker.part {
+                if let Ok(entity) = part.get_entity(&address.entity) {
                     Ok(Response::GetVar(
                         entity.storage.get_var(&address.storage_index())?.clone(),
                     ))
@@ -652,6 +702,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
 pub enum Request {
     GetId,
     GetConfig,
+    PullConfig(Config),
     GetClock,
     GetBlockedWatch,
     SetBlockedWatch(bool),

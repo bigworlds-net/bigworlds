@@ -7,7 +7,7 @@ use std::fmt;
 use fnv::FnvHashMap;
 
 #[cfg(feature = "archive")]
-use rkyv::{check_archived_root, Archive};
+use rkyv::{access, bytecheck::check_bytes, Archive};
 
 use crate::address::ShortLocalAddress;
 use crate::error::{Error, Result};
@@ -55,6 +55,7 @@ const VALUE_SEPARATOR: char = ',';
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
+#[cfg_attr(feature = "archive", rkyv(derive(Hash, PartialEq, Eq)))]
 pub enum VarType {
     String,
     Int,
@@ -71,7 +72,7 @@ pub enum VarType {
     ByteList,
     Vec2List,
     Vec3List,
-    VarList,
+    List,
 
     StringGrid,
     IntGrid,
@@ -80,7 +81,7 @@ pub enum VarType {
     ByteGrid,
     Vec2Grid,
     Vec3Grid,
-    VarGrid,
+    Grid,
 
     Map,
 }
@@ -102,6 +103,7 @@ impl VarType {
             BYTE_VAR_TYPE_NAME => VarType::Byte,
             VEC2_VAR_TYPE_NAME => VarType::Vec2,
             VEC3_VAR_TYPE_NAME => VarType::Vec3,
+            MAP_VAR_TYPE_NAME => VarType::Map,
             _ => {
                 let split = s.split(VAR_TYPE_NAME_SEPARATOR).collect::<Vec<&str>>();
                 if split.len() != 2 {
@@ -129,7 +131,7 @@ impl VarType {
                         VEC3_VAR_TYPE_NAME => VarType::Vec3Grid,
                         _ => unimplemented!(),
                     },
-                    MAP_VAR_TYPE_NAME => VarType::Map,
+                    // MAP_VAR_TYPE_NAME => VarType::Map,
                     _ => unimplemented!("{:?}", split[0]),
                 }
             }
@@ -148,9 +150,9 @@ impl VarType {
             BYTE_VAR_TYPE_NAME => VarType::Byte,
             VEC2_VAR_TYPE_NAME => VarType::Vec2,
             VEC3_VAR_TYPE_NAME => VarType::Vec3,
-            LIST_VAR_TYPE_NAME => VarType::VarList,
-            GRID_VAR_TYPE_NAME => VarType::VarGrid,
-            MAP_VAR_TYPE_NAME => VarType::Map,
+            LIST_VAR_TYPE_NAME => VarType::List,
+            GRID_VAR_TYPE_NAME => VarType::Grid,
+            // MAP_VAR_TYPE_NAME => VarType::Map,
             _ => panic!("invalid var type: {}", s),
         };
         var_type
@@ -166,8 +168,8 @@ impl VarType {
             VarType::Byte => BYTE_VAR_TYPE_NAME,
             VarType::Vec2 => VEC2_VAR_TYPE_NAME,
             VarType::Vec3 => VEC3_VAR_TYPE_NAME,
-            VarType::VarList => LIST_VAR_TYPE_NAME,
-            VarType::VarGrid => GRID_VAR_TYPE_NAME,
+            VarType::List => LIST_VAR_TYPE_NAME,
+            VarType::Grid => GRID_VAR_TYPE_NAME,
             VarType::Map => MAP_VAR_TYPE_NAME,
             VarType::StringList => "list_str",
             VarType::IntList => "list_int",
@@ -207,7 +209,7 @@ impl VarType {
             | VarType::ByteList
             | VarType::Vec2List
             | VarType::Vec3List
-            | VarType::VarList => Var::List(Default::default()),
+            | VarType::List => Var::List(Default::default()),
             VarType::StringGrid
             | VarType::IntGrid
             | VarType::FloatGrid
@@ -215,24 +217,47 @@ impl VarType {
             | VarType::ByteGrid
             | VarType::Vec2Grid
             | VarType::Vec3Grid
-            | VarType::VarGrid => Var::Grid(Default::default()),
+            | VarType::Grid => Var::Grid(Default::default()),
             VarType::Map => Var::Map(BTreeMap::new()),
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn from_json_value(value: &serde_json::Value) -> VarType {
+        match value {
+            serde_json::Value::Null => VarType::Bool,
+            serde_json::Value::Bool(_) => VarType::Bool,
+            serde_json::Value::Number(number) => {
+                if number.is_f64() {
+                    VarType::Float
+                } else {
+                    VarType::Int
+                }
+            }
+            serde_json::Value::String(_) => VarType::String,
+            serde_json::Value::Array(_) => VarType::List,
+            serde_json::Value::Object(_) => VarType::Map,
         }
     }
 }
 
 /// Abstraction over all available variables.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize, deepsize::DeepSizeOf)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
-#[cfg_attr(feature = "archive", archive_attr(derive(PartialEq, PartialOrd)))]
-#[cfg_attr(
-    feature = "archive",
-    archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))
-)]
+// #[cfg_attr(feature = "archive", rkyv(compare(PartialEq, PartialOrd)))]
+#[cfg_attr(feature = "archive", rkyv(serialize_bounds(
+    __S: rkyv::ser::Writer + rkyv::ser::Allocator,
+    __S::Error: rkyv::rancor::Source,
+)))]
+#[cfg_attr(feature = "archive", rkyv(deserialize_bounds(__D::Error: rkyv::rancor::Source)))]
+#[cfg_attr(feature = "archive", rkyv(bytecheck(
+    bounds(
+        __C: rkyv::validation::ArchiveContext,
+    )
+)))]
 pub enum Var {
     String(String),
     Int(Int),
@@ -241,39 +266,9 @@ pub enum Var {
     Byte(u8),
     Vec2(Float, Float),
     Vec3(Float, Float, Float),
-    List(
-        #[cfg_attr(feature = "archive", omit_bounds)]
-        // #[archive_attr(omit_bounds)]
-        Vec<Var>,
-    ),
-    Grid(
-        #[cfg_attr(feature = "archive", omit_bounds)]
-        // #[archive_attr(omit_bounds)]
-        Vec<Vec<Var>>,
-    ),
-    Map(
-        #[cfg_attr(feature = "archive", omit_bounds)]
-        // #[archive_attr(omit_bounds)]
-        BTreeMap<Var, Var>,
-    ),
-}
-
-impl Eq for Var {}
-
-#[cfg(feature = "archive")]
-impl Eq for ArchivedVar {}
-
-impl Ord for Var {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
-    }
-}
-
-#[cfg(feature = "archive")]
-impl Ord for ArchivedVar {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
-    }
+    List(#[cfg_attr(feature = "archive", rkyv(omit_bounds))] Vec<Var>),
+    Grid(#[cfg_attr(feature = "archive", rkyv(omit_bounds))] Vec<Vec<Var>>),
+    Map(#[cfg_attr(feature = "archive", rkyv(omit_bounds))] BTreeMap<String, Var>),
 }
 
 impl Var {
@@ -297,7 +292,7 @@ impl Var {
             | VarType::ByteList
             | VarType::Vec2List
             | VarType::Vec3List
-            | VarType::VarList => Var::List(Vec::new()),
+            | VarType::List => Var::List(Vec::new()),
             VarType::StringGrid
             | VarType::IntGrid
             | VarType::FloatGrid
@@ -305,7 +300,7 @@ impl Var {
             | VarType::ByteGrid
             | VarType::Vec2Grid
             | VarType::Vec3Grid
-            | VarType::VarGrid => Var::Grid(Vec::new()),
+            | VarType::Grid => Var::Grid(Vec::new()),
             VarType::Map => Var::Map(Default::default()),
         }
     }
@@ -329,10 +324,10 @@ impl Var {
                         VarType::Byte => VarType::ByteList,
                         VarType::Vec2 => VarType::Vec2List,
                         VarType::Vec3 => VarType::Vec3List,
-                        _ => VarType::VarList,
+                        _ => VarType::List,
                     }
                 } else {
-                    VarType::VarList
+                    VarType::List
                 }
             }
             Var::Grid(grid) => {
@@ -346,13 +341,13 @@ impl Var {
                             VarType::Byte => VarType::ByteGrid,
                             VarType::Vec2 => VarType::Vec2Grid,
                             VarType::Vec3 => VarType::Vec3Grid,
-                            _ => VarType::VarGrid,
+                            _ => VarType::Grid,
                         }
                     } else {
-                        VarType::VarGrid
+                        VarType::Grid
                     }
                 } else {
-                    VarType::VarGrid
+                    VarType::Grid
                 }
             }
             Var::Map(_) => VarType::Map,
@@ -773,7 +768,7 @@ impl Var {
                 | VarType::ByteList
                 | VarType::Vec2List
                 | VarType::Vec3List
-                | VarType::VarList => list_from_str(s, vt)?,
+                | VarType::List => list_from_str(s, vt)?,
                 // VarType::StringGrid
                 // | VarType::IntGrid
                 // | VarType::FloatGrid
@@ -782,7 +777,7 @@ impl Var {
                 // | VarType::Vec2Grid
                 // | VarType::Vec3Grid
                 // | VarType::VarGrid => grid_from_str(s, vt)?,
-                VarType::Map => unimplemented!(),
+                // VarType::Map => unimplemented!(),
                 _ => unimplemented!(),
             },
             None => {
@@ -911,7 +906,11 @@ impl Var {
                         .collect::<Vec<_>>(),
                 ),
             },
-            serde_json::Value::Object(map) => todo!(),
+            serde_json::Value::Object(map) => Var::Map(
+                map.into_iter()
+                    .map(|(k, v)| (k, Var::from_serde(None, v)))
+                    .collect(),
+            ),
         }
     }
 }

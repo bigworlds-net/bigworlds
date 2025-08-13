@@ -11,18 +11,47 @@ use crate::address::LocalAddress;
 use crate::entity::Entity;
 use crate::time::Instant;
 use crate::{
-    string, Address, CompName, EntityId, EntityName, EventName, Float, Int, Result, StringId, Var,
-    VarName, VarType,
+    Address, CompName, EntityId, EntityName, EventName, Float, Int, Result, Var, VarName, VarType,
 };
 
 /// Collection of items defining an individual query.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Query {
     pub description: Description,
     pub layout: Layout,
     pub filters: Vec<Filter>,
     pub mappings: Vec<Map>,
     pub scope: Scope,
+    pub archive: Archive,
+    pub limits: Limits,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+pub struct Limits {
+    pub entities: Option<u32>,
+    pub product_entries: Option<u32>,
+    pub size_bytes: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+pub enum Archive {
+    Only,
+    #[default]
+    Ignore,
+    Include,
+    IncludeAndRestoreSelected,
 }
 
 impl Query {
@@ -45,6 +74,17 @@ impl Query {
         self.mappings.push(map);
         self
     }
+
+    pub fn archive(mut self, map: Archive) -> Self {
+        self.archive = map;
+        self
+    }
+
+    pub fn limits(mut self, entities: Option<u32>, entries: Option<u32>) -> Self {
+        self.limits.entities = entities;
+        self.limits.product_entries = entries;
+        self
+    }
 }
 
 impl Default for Query {
@@ -57,12 +97,19 @@ impl Default for Query {
             /// By default no variables are included in the response.
             mappings: vec![],
             scope: Scope::default(),
+            archive: Archive::default(),
+            // By default there's no limits on the response.
+            limits: Limits::default(),
         }
     }
 }
 
 /// Uniform query product type.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum QueryProduct {
     NativeAddressedVar(FnvHashMap<(EntityName, CompName, VarName), Var>),
     AddressedVar(FnvHashMap<Address, Var>),
@@ -165,6 +212,10 @@ impl QueryProduct {
 
 /// Defines possible trigger conditions for a query.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Trigger {
     /// Trigger on each simulation step.
     #[default]
@@ -192,6 +243,10 @@ pub enum Trigger {
 
 /// Defines all possible entity filtering mechanisms when processing a query.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Filter {
     /// Select entities that have all the specified components
     AllComponents(Vec<CompName>),
@@ -206,7 +261,7 @@ pub enum Filter {
     /// Filter by some variable being in specified range
     VarRange(LocalAddress, Var, Var),
     /// Filter by some variable being in specified range
-    AttrRange(StringId, Var, Var),
+    AttrRange(String, Var, Var),
     /// Filter by entity distance to some point, matching on the position
     /// component (x, y and z coordinates, then x,y and z max distance)
     // TODO use single address to vector3 value
@@ -218,6 +273,10 @@ pub enum Filter {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum NodeFilter {
     Local(Option<u32>),
     Remote(Option<u32>),
@@ -226,6 +285,10 @@ pub enum NodeFilter {
 /// Defines all possible ways to map entity data, allowing for a fine-grained
 /// control over the resulting query product.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Map {
     /// Map all the data stored on selected entities
     All,
@@ -242,9 +305,9 @@ pub enum Map {
 
 impl Map {
     pub fn components(components: Vec<&str>) -> Self {
-        let mut c = Vec::<StringId>::new();
+        let mut c = Vec::<String>::new();
         for comp in components.into_iter() {
-            c.push(string::new_truncate(comp));
+            c.push(comp.to_owned());
         }
         Map::Components(c)
     }
@@ -254,6 +317,10 @@ impl Map {
 /// associating data points with their addresses.
 // TODO: research how much of fine-grained control is necessary here.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Description {
     /// Describe values with an address tuple
     NativeDescribed,
@@ -277,6 +344,10 @@ pub enum Description {
 
 /// Defines possible layout versions for the returned data.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Layout {
     /// Use the internal value representation type built on Rust's enum
     #[default]
@@ -292,6 +363,10 @@ pub enum Layout {
 /// Effectively it's a way to potentially limit the number of workers a query
 /// should be performed on.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Scope {
     /// Broadcast the query across the whole cluster
     #[default]
@@ -347,6 +422,10 @@ pub fn combine_products(mut products: Vec<QueryProduct>) -> QueryProduct {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct AddressedTypedMap {
     pub strings: FnvHashMap<Address, String>,
     pub ints: FnvHashMap<Address, Int>,

@@ -46,7 +46,7 @@ use smallvec::SmallVec;
 use libloading::Library;
 
 use crate::address::{Address, ShortLocalAddress};
-use crate::{string, CompName, EntityId, EntityName, ShortString, StringId, Var, VarType};
+use crate::{CompName, EntityId, EntityName, Var, VarType};
 
 use crate::{model, util};
 
@@ -73,7 +73,7 @@ pub enum CommandResult {
     /// Jump to line.
     JumpToLine(usize),
     /// Jump to tag.
-    JumpToTag(StringId),
+    JumpToTag(String),
     /// Signalize that an error has occurred during execution of the command.
     Err(Error),
 }

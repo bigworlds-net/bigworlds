@@ -51,6 +51,7 @@ pub enum RequestLocal {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Request {
+    PullConfig(crate::worker::Config),
     ConnectToLeader(CompositeAddress),
     /// Introduces the calling leader to the remote worker.
     IntroduceLeader {
@@ -148,6 +149,12 @@ pub enum Request {
     MachineLogic {
         name: String,
     },
+}
+
+impl Request {
+    pub fn into_local(self) -> RequestLocal {
+        RequestLocal::Request(self)
+    }
 }
 
 impl Into<RequestLocal> for Request {

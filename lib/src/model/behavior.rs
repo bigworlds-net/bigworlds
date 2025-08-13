@@ -2,7 +2,7 @@ use std::io::Read;
 
 use fnv::FnvHashMap;
 
-use crate::{string, CompName, Error, EventName, Result, ShortString, StringId, VarName};
+use crate::{CompName, Error, EventName, Result, VarName};
 
 use super::intermediate;
 
@@ -12,6 +12,10 @@ use super::intermediate;
 /// when from the level of the model, utilizing the model's general
 /// composability principles.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum InstancingTarget {
     GlobalSingleton,
     PerWorker,
@@ -21,6 +25,10 @@ pub enum InstancingTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Behavior {
     /// Unique name of the behavior model.
     pub name: String,
@@ -47,6 +55,10 @@ pub struct Behavior {
 
 /// Basic byte array artifact storage.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Artifact {
     pub bytes: Vec<u8>,
 }
@@ -74,6 +86,10 @@ impl From<Vec<u8>> for Artifact {
 /// Inner representation of a behavior in the form of an enumeration of
 /// all possible behavior kinds along with kind-dependent contents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum BehaviorInner {
     #[cfg(feature = "machine")]
     Machine {
@@ -255,12 +271,7 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                     // or architecture based.
                 }
                 "components" => {
-                    targets.push(InstancingTarget::PerEntityWithAllComponents(
-                        values
-                            .into_iter()
-                            .map(|v| string::new_truncate(&v))
-                            .collect(),
-                    ));
+                    targets.push(InstancingTarget::PerEntityWithAllComponents(values));
                 }
                 _ => unimplemented!(),
             }

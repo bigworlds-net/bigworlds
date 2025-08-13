@@ -24,6 +24,10 @@ use crate::query::{Query, QueryProduct, Trigger};
 use crate::{EntityId, EntityName, Float, Int, Result, Var};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Message {
     OK,
 
@@ -81,6 +85,8 @@ pub enum Message {
 
     InitializeRequest,
     InitializeResponse,
+
+    InvokeRequest(InvokeRequest),
 }
 
 impl Message {

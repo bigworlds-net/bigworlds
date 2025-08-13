@@ -9,7 +9,7 @@ use itertools::Itertools;
 
 use crate::entity::Storage;
 use crate::machine::{ErrorKind, Result};
-use crate::{rpc, CompName, EntityId, LocalExec, StringId};
+use crate::{rpc, CompName, EntityId, LocalExec};
 
 #[cfg(feature = "machine_dynlib")]
 use crate::machine::Libraries;

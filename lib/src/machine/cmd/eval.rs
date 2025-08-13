@@ -7,7 +7,7 @@ use std::process::Command as ProcessCommand;
 use fasteval::{Compiler, Evaler};
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress};
-use crate::{string, CompName, Float, StringId, Var, VarType};
+use crate::{CompName, Float, Var, VarType};
 
 use self::getopts::Options;
 
@@ -21,10 +21,14 @@ use std::str::FromStr;
 
 /// Precompiles an evaluation and stores it
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Eval {
     pub expr: String,
     // pub slab: fasteval::Slab,
-    pub args: Vec<(StringId, Address)>,
+    pub args: Vec<(String, Address)>,
     // pub arg0: Option<(ShortString, RegistryTarget)>,
     pub out: Option<Address>,
 }
@@ -57,10 +61,7 @@ impl Eval {
         for free_arg in matches.free.iter().skip(1) {
             let split = free_arg.split('=').collect::<Vec<&str>>();
             if split.len() == 2 {
-                eval_args.push((
-                    string::new_truncate(split[0]),
-                    Address::from_str(&split[1])?,
-                ));
+                eval_args.push((split[0].to_owned(), Address::from_str(&split[1])?));
             }
         }
 

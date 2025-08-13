@@ -19,10 +19,7 @@ use semver::{Version, VersionReq};
 use toml::Value;
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress, SEPARATOR_SYMBOL};
-use crate::{
-    string, var, CompName, EntityName, EventName, PrefabName, ShortString, StringId, VarName,
-    VarType,
-};
+use crate::{var, CompName, EntityName, EventName, PrefabName, VarName, VarType};
 
 use crate::error::{Error, Result};
 use crate::{util, MODEL_MANIFEST_FILE};
@@ -33,11 +30,19 @@ use crate::machine::script::{parser, preprocessor, InstructionType};
 use crate::machine::START_STATE_NAME;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Scenario {
     pub name: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Entity {
     pub name: EntityName,
     pub prefab: Option<PrefabName>,
@@ -126,12 +131,8 @@ impl TryFrom<intermediate::Model> for Model {
 
         for im_prefab in im.prefabs {
             model.prefabs.push(PrefabModel {
-                name: string::new_truncate(&im_prefab.name),
-                components: im_prefab
-                    .components
-                    .iter()
-                    .map(|s| string::new_truncate(s))
-                    .collect::<Vec<_>>(),
+                name: im_prefab.name,
+                components: im_prefab.components,
             });
         }
 
@@ -146,8 +147,8 @@ impl TryFrom<intermediate::Model> for Model {
         // );
         for im_entity in im.entities {
             model.entities.push(Entity {
-                name: string::new_truncate(&im_entity.id),
-                prefab: im_entity.prefab.map(|p| string::new_truncate(&p)),
+                name: im_entity.id,
+                prefab: im_entity.prefab,
                 data: im_entity
                     .data
                     .into_iter()
@@ -213,14 +214,12 @@ impl Model {
 
 impl Model {
     /// Get reference to entity prefab by its name.
-    pub fn get_prefab(&self, name: &StringId) -> Option<&PrefabModel> {
-        self.prefabs
-            .iter()
-            .find(|entity| &entity.name.as_str() == &name.as_str())
+    pub fn get_prefab(&self, name: &str) -> Option<&PrefabModel> {
+        self.prefabs.iter().find(|entity| &entity.name == &name)
     }
 
     /// Get mutable reference to entity prefab using `type_` and `id` args.
-    pub fn get_entity_mut(&mut self, name: &StringId) -> Option<&mut PrefabModel> {
+    pub fn get_entity_mut(&mut self, name: &str) -> Option<&mut PrefabModel> {
         self.prefabs.iter_mut().find(|entity| &entity.name == name)
     }
 
@@ -233,7 +232,7 @@ impl Model {
     }
 
     /// Get mutable reference to component model using `type_` and `id` args.
-    pub fn get_component_mut(&mut self, name: &StringId) -> Option<&mut Component> {
+    pub fn get_component_mut(&mut self, name: &str) -> Option<&mut Component> {
         self.components.iter_mut().find(|comp| &comp.name == name)
     }
 }
@@ -284,12 +283,8 @@ impl TryFrom<intermediate::Prefab> for PrefabModel {
 
     fn try_from(i: intermediate::Prefab) -> Result<PrefabModel> {
         Ok(PrefabModel {
-            name: string::new_truncate(&i.name),
-            components: i
-                .components
-                .iter()
-                .map(|c| string::new_truncate(c))
-                .collect(),
+            name: i.name,
+            components: i.components,
         })
     }
 }
@@ -324,7 +319,7 @@ pub struct Component {
 impl From<intermediate::Component> for Component {
     fn from(im: intermediate::Component) -> Self {
         Self {
-            name: string::new_truncate(&im.name),
+            name: im.name,
             vars: im
                 .vars
                 .into_iter()
@@ -348,10 +343,13 @@ pub struct Var {
 
 impl Var {
     pub fn new(key: &str, value: serde_json::Value) -> Result<Var> {
-        let addr = ShortLocalAddress::from_str(&key)?;
+        let addr = ShortLocalAddress::from_str(&key).or(ShortLocalAddress::from_str_with_type(
+            &key,
+            VarType::from_json_value(&value),
+        ))?;
 
         Ok(Var {
-            name: string::new_truncate(&addr.var_name),
+            name: addr.var_name.clone(),
             type_: addr.var_type,
             default: Some(crate::var::Var::from_serde(Some(addr), value)),
         })

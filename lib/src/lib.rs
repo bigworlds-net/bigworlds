@@ -7,7 +7,7 @@ extern crate serde;
 #[macro_use]
 extern crate log;
 
-pub mod string;
+mod string;
 pub mod time;
 
 pub mod address;
@@ -38,12 +38,11 @@ mod executor;
 
 pub use address::Address;
 pub use error::{Error, Result};
-pub use executor::{Executor, LocalExec, RemoteExec, Signal};
+pub use executor::{Executor, ExecutorMulti, LocalExec, RemoteExec, Signal};
 pub use model::Model;
 pub use query::{Query, QueryProduct};
 pub use server::Config as ServerConfig;
 pub use sim::SimHandle;
-pub use string::{LongString, ShortString, StringId};
 pub use var::{Var, VarType};
 
 const MODEL_MANIFEST_FILE: &str = "model.toml";
@@ -64,15 +63,15 @@ pub type Int = i64;
 pub type Int = i32;
 
 /// Entity string identifier.
-pub type EntityName = StringId;
+pub type EntityName = String;
 /// Entity prefab string identifier.
-pub type PrefabName = StringId;
+pub type PrefabName = String;
 /// Component string identifier.
-pub type CompName = StringId;
+pub type CompName = String;
 /// Variable string identifier.
-pub type VarName = StringId;
+pub type VarName = String;
 /// Event string identifier.
-pub type EventName = StringId;
+pub type EventName = String;
 
 /// Entity unique integer identifier.
 pub type EntityId = u32;

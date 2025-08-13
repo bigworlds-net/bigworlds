@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress};
-use crate::{address, string, CompName, EntityId, EntityName, StringId, Var, VarType};
+use crate::{address, CompName, EntityId, EntityName, Var, VarType};
 
 use crate::entity::{Entity, Storage};
 use crate::machine::{Error, ErrorKind, Machine, Result};
@@ -10,6 +10,10 @@ use super::super::LocationInfo;
 use super::{Command, CommandResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Set {
     target: Target,
     source: Source,
@@ -17,6 +21,10 @@ pub struct Set {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Target {
     Address(Address),
     LocalAddress(ShortLocalAddress),
@@ -30,20 +38,20 @@ impl Target {
                 return Ok(Target::LocalAddress(ShortLocalAddress {
                     comp: None,
                     var_type: VarType::from_str(split[0])?,
-                    var_name: string::new_truncate(split[1]),
+                    var_name: split[1].to_owned(),
                 }));
             } else if split.len() == 3 {
                 return Ok(Target::LocalAddress(ShortLocalAddress {
-                    comp: Some(string::new_truncate(split[0])),
+                    comp: Some(split[0].to_owned()),
                     var_type: VarType::from_str(split[1])?,
-                    var_name: string::new_truncate(split[2]),
+                    var_name: split[2].to_owned(),
                 }));
             } else if split.len() == 4 {
                 return Ok(Target::Address(Address {
-                    entity: string::new_truncate(split[0]),
-                    comp: string::new_truncate(split[1]),
+                    entity: split[0].to_owned(),
+                    comp: split[1].to_owned(),
                     var_type: VarType::from_str(split[2])?,
-                    var_name: string::new_truncate(split[3]),
+                    var_name: split[3].to_owned(),
                 }));
             } else {
                 unimplemented!()
@@ -64,6 +72,10 @@ impl Target {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Source {
     Address(Address),
     LocalAddress(ShortLocalAddress),
@@ -78,20 +90,20 @@ impl Source {
                 return Ok(Source::LocalAddress(ShortLocalAddress {
                     comp: None,
                     var_type: VarType::from_str(split[0])?,
-                    var_name: string::new_truncate(split[1]),
+                    var_name: split[1].to_owned(),
                 }));
             } else if split.len() == 3 {
                 return Ok(Source::LocalAddress(ShortLocalAddress {
-                    comp: Some(string::new_truncate(split[0])),
+                    comp: Some(split[0].to_owned()),
                     var_type: VarType::from_str(split[1])?,
-                    var_name: string::new_truncate(split[2]),
+                    var_name: split[2].to_owned(),
                 }));
             } else if split.len() == 4 {
                 return Ok(Source::Address(Address {
-                    entity: string::new_truncate(split[0]),
-                    comp: string::new_truncate(split[1]),
+                    entity: split[0].to_owned(),
+                    comp: split[1].to_owned(),
                     var_type: VarType::from_str(split[2])?,
-                    var_name: string::new_truncate(split[3]),
+                    var_name: split[3].to_owned(),
                 }));
             } else {
                 unimplemented!()
@@ -179,10 +191,7 @@ impl Set {
                             .get_var(
                                 loc_addr
                                     .clone()
-                                    .into_address(
-                                        string::new_truncate("entity"),
-                                        string::new_truncate("component"),
-                                    )
+                                    .into_address("entity".to_owned(), "component".to_owned())
                                     .unwrap(),
                             )
                             .await

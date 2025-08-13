@@ -11,10 +11,7 @@ use crate::machine::{
     ProcedureCallInfo, Registry,
 };
 use crate::model::{self, Model, Var};
-use crate::{
-    rpc, string, CompName, EntityId, EntityName, Executor, LongString, ShortString, StringId,
-    VarType,
-};
+use crate::{rpc, CompName, EntityId, EntityName, Executor, VarType};
 
 pub const COMMAND_NAMES: [&'static str; 1] = ["component"];
 
@@ -24,7 +21,7 @@ pub const COMMAND_NAMES: [&'static str; 1] = ["component"];
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct ComponentBlock {
-    pub name: StringId,
+    pub name: String,
     pub source_file: Option<String>,
     pub start_line: usize,
     pub end_line: usize,
@@ -79,7 +76,7 @@ impl ComponentBlock {
 
         match positions_options {
             Some(positions) => Ok(Command::Component(ComponentBlock {
-                name: string::new_truncate(&args[0]),
+                name: args[0].to_owned(),
                 source_file: location.source.clone(),
                 start_line: line + 1,
                 end_line: positions.0,

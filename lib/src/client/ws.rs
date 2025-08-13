@@ -144,6 +144,10 @@ impl AsyncClient for WsClient {
         Ok(())
     }
 
+    async fn invoke(&mut self, event: &str) -> Result<()> {
+        unimplemented!()
+    }
+
     async fn query(&mut self, q: crate::Query) -> Result<crate::QueryProduct> {
         let resp = self.execute(Message::QueryRequest(q)).await?;
         if let Message::QueryResponse(product) = resp {

@@ -2,8 +2,6 @@
 //!
 //! Provides an interface for parsing scripts into sets of instructions.
 
-use crate::{string, ShortString};
-
 use super::{DirectivePrototype, Instruction, InstructionType};
 
 use crate::util;
@@ -202,7 +200,7 @@ fn parse_command(
                 index = next_index;
 
                 if let Some(val) = value {
-                    location_info.tag = Some(string::new_truncate(&val[1..]));
+                    location_info.tag = Some(val[1..].to_owned());
                 }
                 //if value.is_some() {
                 //location_info.tag = Some(ArrStr10::from_str_truncate(value));

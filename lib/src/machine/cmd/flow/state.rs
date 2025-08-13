@@ -5,7 +5,7 @@ use crate::entity::{Entity, Storage};
 use crate::machine::error::ErrorKind;
 use crate::machine::{ComponentCallInfo, Logic, Machine};
 use crate::model::Model;
-use crate::{string, CompName, EntityId, EntityName, ShortString, StringId};
+use crate::{CompName, EntityId, EntityName};
 
 use super::super::super::error::Error;
 use super::super::super::{
@@ -16,7 +16,6 @@ use super::super::{Command, CommandPrototype, CommandResult, LocationInfo};
 pub const COMMAND_NAMES: [&'static str; 1] = ["state"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "small_stringid", derive(Copy))]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -24,7 +23,7 @@ pub const COMMAND_NAMES: [&'static str; 1] = ["state"];
 pub struct State {
     // pub comp: CompName,
     // pub signature: Option<Address>,
-    pub name: StringId,
+    pub name: String,
     pub start_line: usize,
     pub end_line: usize,
     // pub output_variable: Option<Address>,
@@ -80,7 +79,7 @@ impl State {
             Some(positions) => Ok(Command::State(State {
                 // comp: string::new_truncate(""),
                 // signature: None,
-                name: string::new_truncate(&args[0]),
+                name: args[0].to_owned(),
                 start_line: line + 1,
                 end_line: positions.0,
                 // output_variable: None,

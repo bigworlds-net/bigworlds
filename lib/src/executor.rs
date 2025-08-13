@@ -6,10 +6,6 @@ use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
-#[cfg(feature = "archive")]
-use rkyv::de::deserializers::SharedDeserializeMap;
-#[cfg(feature = "archive")]
-use rkyv::{archived_root, from_bytes_unchecked, Archive};
 use uuid::Uuid;
 
 use crate::rpc::Participant;
@@ -191,46 +187,6 @@ impl<IN, OUT> RemoteExec<IN, OUT> {
     }
 }
 
-#[cfg(feature = "archive")]
-#[async_trait::async_trait]
-impl<
-        IN: Send
-            + Sync
-            + rkyv::Serialize<
-                rkyv::ser::serializers::CompositeSerializer<
-                    rkyv::ser::serializers::AlignedSerializer<rkyv::AlignedVec>,
-                    rkyv::ser::serializers::FallbackScratch<
-                        rkyv::ser::serializers::HeapScratch<1024>,
-                        rkyv::ser::serializers::AllocScratch,
-                    >,
-                    rkyv::ser::serializers::SharedSerializeMap,
-                >,
-            >,
-        OUT: Send + Sync + Archive,
-    > Executor<IN, OUT> for RemoteExec<IN, OUT>
-where
-    OUT::Archived: rkyv::Deserialize<OUT, SharedDeserializeMap>,
-{
-    async fn execute(&self, msg: IN) -> Result<OUT> {
-        let (mut send, recv) = self.connection.open_bi().await.unwrap();
-        trace!("got both ends of stream");
-        let msg = rkyv::to_bytes::<_, 1024>(&msg).map_err(|e| Error::Other(e.to_string()))?;
-        trace!("serialized message");
-        send.write_all(&msg).await.unwrap();
-        send.finish().await.unwrap();
-        trace!("wrote all msg");
-        let out_bytes = recv
-            .read_to_end(1000000)
-            .await
-            .map_err(|e| Error::Other(e.to_string()))?;
-        // trace!("outbytes: {:?}", out_bytes);
-        let out: OUT =
-            unsafe { from_bytes_unchecked(&out_bytes).map_err(|e| Error::Other(e.to_string()))? };
-        Ok(out)
-    }
-}
-
-#[cfg(not(feature = "archive"))]
 #[async_trait::async_trait]
 impl<IN: Send + Sync + serde::Serialize, OUT: Send + Sync + serde::de::DeserializeOwned>
     Executor<IN, OUT> for RemoteExec<IN, OUT>
@@ -266,15 +222,11 @@ impl<IN: Send + Sync + serde::Serialize, OUT: Send + Sync + serde::de::Deseriali
             out_bytes
         };
 
-        // #[cfg(not(feature = "quic_transport"))]
-        // let out_bytes = {};
-
         let out: OUT = bincode::deserialize(&out_bytes).map_err(|e| Error::Other(e.to_string()))?;
         Ok(out)
     }
 }
 
-#[cfg(not(feature = "archive"))]
 #[async_trait::async_trait]
 impl<IN: Send + Sync + serde::Serialize, OUT: Send + Sync + serde::de::DeserializeOwned>
     ExecutorMulti<IN, OUT> for RemoteExec<IN, OUT>

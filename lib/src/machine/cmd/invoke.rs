@@ -1,17 +1,21 @@
 use crate::machine::cmd::CommandResult;
 use crate::machine::{Machine, Result};
-use crate::{string, SimHandle, StringId};
+use crate::SimHandle;
 
 /// Invoke
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Invoke {
-    pub events: Vec<StringId>,
+    pub events: Vec<String>,
 }
 impl Invoke {
     pub fn new(args: Vec<String>) -> Result<Self> {
         let mut events = Vec::new();
-        for arg in &args {
-            events.push(string::new_truncate(arg));
+        for arg in args {
+            events.push(arg);
         }
         Ok(Invoke { events })
     }

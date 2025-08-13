@@ -183,17 +183,15 @@ pub enum Error {
 
     #[error("fjall storage error: {0}")]
     FjallError(String),
+
+    #[cfg(feature = "archive")]
+    #[error("rkyv error: {0}")]
+    RkyvError(String),
 }
 
 impl From<fjall::Error> for Error {
     fn from(e: fjall::Error) -> Self {
         Self::FjallError(e.to_string())
-    }
-}
-
-impl From<arrayvec::CapacityError> for Error {
-    fn from(e: arrayvec::CapacityError) -> Self {
-        Self::StringTooLong(e.to_string())
     }
 }
 

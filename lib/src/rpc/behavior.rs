@@ -7,7 +7,6 @@ use crate::{EntityName, EventName, QueryProduct};
 )]
 pub enum Request {
     Event(EventName),
-    Subscription(String, QueryProduct),
     Shutdown,
 }
 

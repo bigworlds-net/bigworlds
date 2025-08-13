@@ -47,9 +47,7 @@ async fn main() -> anyhow::Result<()> {
         TryInto::<Model>::try_into(
             foo_worker
                 .ctl
-                .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                    rpc::worker::Request::GetModel
-                )))
+                .execute(Signal::from(rpc::worker::Request::GetModel.into_local()))
                 .await??
                 .payload
         )?,

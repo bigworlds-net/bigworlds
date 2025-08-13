@@ -34,15 +34,19 @@ pub type LeaderId = Uuid;
 
 /// Information about the state of the leader itself.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Status {
     /// Exact time when the leader was spawned.
-    pub started_at: DateTime<Utc>,
+    pub started_at: u32,
 }
 
 impl Status {
     pub fn new() -> Self {
         Self {
-            started_at: Utc::now(),
+            started_at: Utc::now().timestamp() as u32,
         }
     }
 }

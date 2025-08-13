@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::iter::FromIterator;
 
-use crate::{string, Address, ShortString};
+use crate::Address;
 
 use crate::entity::{Entity, Storage};
 use crate::model::Model;
@@ -17,13 +17,12 @@ use crate::machine::Result;
 pub const COMMAND_NAMES: [&'static str; 2] = ["proc", "procedure"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "small_stringid", derive(Copy))]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct Procedure {
-    pub name: ShortString,
+    pub name: String,
     pub start_line: usize,
     pub end_line: usize,
     pub output_variable: Option<Address>,

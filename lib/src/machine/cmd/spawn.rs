@@ -4,12 +4,15 @@ use crate::address::ShortLocalAddress;
 use crate::executor::Signal;
 use crate::machine::cmd::CommandResult;
 use crate::machine::{Error, ErrorKind, LocationInfo, Machine, Result};
-use crate::{rpc, string, EntityId, EntityName, Executor, PrefabName, StringId};
+use crate::{rpc, EntityId, EntityName, Executor, PrefabName};
 
 use super::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "small_stringid", derive(Copy))]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Spawn {
     pub prefab: Option<PrefabName>,
     pub spawn_name: Option<EntityName>,
@@ -42,14 +45,14 @@ impl Spawn {
             })
         } else if matches.free.len() == 1 {
             Ok(Self {
-                prefab: Some(string::new_truncate(&args[0])),
+                prefab: Some(args[0].to_owned()),
                 spawn_name: None,
                 out,
             })
         } else if matches.free.len() == 2 {
             Ok(Self {
-                prefab: Some(string::new_truncate(&args[0])),
-                spawn_name: Some(string::new_truncate(&args[1])),
+                prefab: Some(args[0].to_owned()),
+                spawn_name: Some(args[1].to_owned()),
                 out,
             })
         } else {
@@ -64,10 +67,7 @@ impl Spawn {
         match machine
             .worker
             .execute(Signal::from(rpc::worker::Request::SpawnEntity {
-                name: self
-                    .spawn_name
-                    .clone()
-                    .unwrap_or(string::new_truncate("todo")),
+                name: self.spawn_name.clone().unwrap_or("todo".to_owned()),
                 prefab: self.prefab.clone(),
             }))
             .await

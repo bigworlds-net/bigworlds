@@ -7,7 +7,7 @@ use crate::address::{Address, PartialAddress, ShortLocalAddress};
 use crate::executor::LocalExec;
 use crate::machine::Machine;
 use crate::query::Filter;
-use crate::{CompName, Query, StringId, VarType};
+use crate::{CompName, Query, VarType};
 
 use crate::entity::Storage;
 use crate::machine::error::{ErrorKind, Result};

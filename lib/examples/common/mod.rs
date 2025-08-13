@@ -3,7 +3,7 @@ use bigworlds::{
         behavior::{Behavior, BehaviorInner, InstancingTarget},
         Component, Entity, PrefabModel, Var as VarModel,
     },
-    string, Model, Var, VarType,
+    Model, Var, VarType,
 };
 
 /// Simple model definition for demonstration purposes.
@@ -17,38 +17,38 @@ use bigworlds::{
 pub fn model() -> Model {
     Model {
         prefabs: vec![PrefabModel {
-            name: string::new_truncate("cube"),
+            name: "cube".to_owned(),
             components: vec![
-                string::new_truncate("position"),
-                string::new_truncate("color"),
+                "position".to_owned(),
+                "color".to_owned(),
             ],
         }],
 
         components: vec![
             Component {
-                name: string::new_truncate("position"),
+                name: "position".to_owned(),
                 vars: vec![
                     VarModel {
-                        name: string::new_truncate("x"),
+                        name: "x".to_owned(),
                         type_: VarType::Float,
                         default: Some(Var::Float(0.)),
                     },
                     VarModel {
-                        name: string::new_truncate("y"),
+                        name: "y".to_owned(),
                         type_: VarType::Float,
                         default: Some(Var::Float(0.)),
                     },
                     VarModel {
-                        name: string::new_truncate("z"),
+                        name: "z".to_owned(),
                         type_: VarType::Float,
                         default: Some(Var::Float(0.)),
                     },
                 ],
             },
             Component {
-                name: string::new_truncate("color"),
+                name: "color".to_owned(),
                 vars: vec![VarModel {
-                    name: string::new_truncate("value"),
+                    name: "value".to_owned(),
                     type_: VarType::String,
                     default: Some(Var::String("blue".to_owned())),
                 }],
@@ -56,25 +56,25 @@ pub fn model() -> Model {
         ],
         entities: vec![
             Entity {
-                name: string::new_truncate("cube_0"),
-                prefab: Some(string::new_truncate("cube")),
+                name: "cube_0".to_owned(),
+                prefab: Some("cube".to_owned()),
                 data: Default::default(),
             },
             Entity {
-                name: string::new_truncate("cube_1"),
-                prefab: Some(string::new_truncate("cube")),
+                name: "cube_1".to_owned(),
+                prefab: Some("cube".to_owned()),
                 data: Default::default(),
             },
             Entity {
-                name: string::new_truncate("cube_2"),
-                prefab: Some(string::new_truncate("cube")),
+                name: "cube_2".to_owned(),
+                prefab: Some("cube".to_owned()),
                 data: Default::default(),
             },
         ],
         behaviors: vec![
             Behavior {
                 name: "shuffler".to_owned(),
-                triggers: vec![string::new_truncate("step")],
+                triggers: vec!["step".to_owned()],
                 targets: vec![InstancingTarget::GlobalSingleton],
                 tracing: "".to_owned(),
                 inner: BehaviorInner::Lua {
@@ -87,9 +87,9 @@ pub fn model() -> Model {
             },
             Behavior {
                 name: "greeter".to_owned(),
-                triggers: vec![string::new_truncate("step")],
+                triggers: vec!["step".to_owned()],
                 targets: vec![InstancingTarget::PerEntityWithAllComponents(vec![
-                    string::new_truncate("color"),
+                    "color".to_owned(),
                 ])],
                 tracing: "".to_owned(),
                 inner: BehaviorInner::Lua {

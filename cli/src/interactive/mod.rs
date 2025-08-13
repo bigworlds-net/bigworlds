@@ -18,8 +18,8 @@ use linefeed::{Interface, ReadResult};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use bigworlds::client::r#async::AsyncClient;
 use bigworlds::query;
-use bigworlds::{client::r#async::AsyncClient, string};
 
 use crate::interactive::config::{Config, CONFIG_FILE};
 
@@ -225,6 +225,9 @@ pub async fn start(
                                     }
                                 }
                             }
+                            "invoke" => {
+                                client.invoke(args).await?;
+                            }
                             "run" => {
                                 do_run_loop = true;
                                 run_loop_count = args.parse::<i32>().unwrap();
@@ -280,9 +283,8 @@ pub async fn start(
                                 // HACK: filter output by single entity name
                                 if !args.is_empty() {
                                     println!("filtering by name: {args}");
-                                    query = query.filter(query::Filter::Name(vec![
-                                        string::new_truncate(args),
-                                    ]));
+                                    query =
+                                        query.filter(query::Filter::Name(vec![args.to_owned()]));
                                 }
 
                                 println!("executing query: {:?}", query);
@@ -303,10 +305,7 @@ pub async fn start(
                             "spawn" => {
                                 let split = args.split(" ").collect::<Vec<&str>>();
                                 client
-                                    .spawn_entity(
-                                        string::new_truncate(split[0]),
-                                        Some(string::new_truncate(split[1])),
-                                    )
+                                    .spawn_entity(split[0].to_owned(), Some(split[1].to_owned()))
                                     .await
                                     .inspect_err(|e| error!("{}", e));
                             }
@@ -316,10 +315,8 @@ pub async fn start(
                                 for n in 0..split[1].parse()? {
                                     client
                                         .spawn_entity(
-                                            string::new_truncate(
-                                                &Uuid::new_v4().simple().to_string(),
-                                            ),
-                                            Some(string::new_truncate(split[0])),
+                                            Uuid::new_v4().simple().to_string(),
+                                            Some(split[0].to_owned()),
                                         )
                                         .await
                                         .inspect_err(|e| error!("{}", e));

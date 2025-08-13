@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use itertools::Itertools;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -16,7 +17,7 @@ use crate::rpc::msg::{
     self, AdvanceRequest, Message, RegisterClientRequest, RegisterClientResponse,
 };
 use crate::rpc::worker::RequestLocal;
-use crate::{behavior, query, string, Query};
+use crate::{behavior, query, Query};
 use crate::{
     leader, rpc, server, worker, Address, EntityId, EntityName, Error, Model, Result, Var,
 };
@@ -194,6 +195,19 @@ impl SimHandle {
         Ok(forked)
     }
 
+    pub async fn pull_config(&mut self, config: SimConfig) -> Result<()> {
+        self.worker
+            .ctl
+            .execute(Signal::from(
+                rpc::worker::Request::PullConfig(config.worker).into_local(),
+            ))
+            .await??
+            .discard_context()
+            .ok()?;
+
+        Ok(())
+    }
+
     /// Access the client-based interface.
     ///
     /// By default `SimHandle` will interface with cluster participants
@@ -286,9 +300,9 @@ impl SimHandle {
     pub async fn invoke(&mut self, event: &str) -> Result<()> {
         self.worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::Trigger(vec![string::new_truncate(event)]),
-            )))
+            .execute(Signal::from(
+                rpc::worker::Request::Trigger(vec![event.to_owned()]).into_local(),
+            ))
             .await??;
         Ok(())
     }
@@ -330,9 +344,9 @@ impl SimHandle {
         let sig = self
             .worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::GetEntity(name),
-            )))
+            .execute(Signal::from(
+                rpc::worker::Request::GetEntity(name).into_local(),
+            ))
             .await??;
 
         match sig.into_payload() {
@@ -345,9 +359,9 @@ impl SimHandle {
         let sig = self
             .worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::TakeEntity(name, entity),
-            )))
+            .execute(Signal::from(
+                rpc::worker::Request::TakeEntity(name, entity).into_local(),
+            ))
             .await??;
 
         match sig.into_payload() {
@@ -360,9 +374,7 @@ impl SimHandle {
         let sig = self
             .worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::EntityList,
-            )))
+            .execute(Signal::from(rpc::worker::Request::EntityList.into_local()))
             .await??;
 
         match sig {
@@ -436,7 +448,7 @@ impl SimHandle {
         for n in 0..count {
             let ctl = self.leader.ctl.clone();
             let req: rpc::leader::RequestLocal = rpc::leader::Request::SpawnEntity {
-                name: string::new_truncate(&Uuid::new_v4().simple().to_string()),
+                name: Uuid::new_v4().simple().to_string(),
                 prefab: prefab.clone(),
             }
             .into();
@@ -459,7 +471,7 @@ impl SimHandle {
             .ctl
             .execute(Signal::from(rpc::leader::RequestLocal::Request(
                 rpc::leader::Request::RemoveEntity {
-                    name: string::new_truncate(name),
+                    name: name.to_owned(),
                 },
             )))
             .await??;
@@ -491,10 +503,8 @@ impl SimHandle {
             .worker
             .ctl
             .execute(
-                Signal::from(rpc::worker::RequestLocal::Request(
-                    rpc::worker::Request::ProcessQuery(query),
-                ))
-                .originating_at(rpc::Caller::SimHandle),
+                Signal::from(rpc::worker::Request::ProcessQuery(query).into_local())
+                    .originating_at(rpc::Caller::SimHandle),
             )
             .await??
             .into_payload()
@@ -509,9 +519,9 @@ impl SimHandle {
         let rcv = self
             .worker
             .ctl
-            .execute_to_multi(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::Subscribe(triggers, query),
-            )))
+            .execute_to_multi(Signal::from(
+                rpc::worker::Request::Subscribe(triggers, query).into_local(),
+            ))
             .await?;
         Ok(rcv)
     }
@@ -536,9 +546,9 @@ impl SimHandle {
     pub async fn set_var(&self, addr: Address, var: Var) -> Result<()> {
         self.worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::SetVar(addr, var),
-            )))
+            .execute(Signal::from(
+                rpc::worker::Request::SetVar(addr, var).into_local(),
+            ))
             .await??;
         Ok(())
     }
@@ -625,12 +635,7 @@ impl AsyncClient for SimClient {
     }
 
     async fn spawn_entity(&mut self, name: EntityName, prefab: Option<PrefabName>) -> Result<()> {
-        self.0
-            .spawn_entity(
-                string::new_truncate(&name),
-                prefab.map(|p| string::new_truncate(&p)),
-            )
-            .await
+        self.0.spawn_entity(name, prefab).await
     }
     async fn despawn_entity(&mut self, name: &str) -> Result<()> {
         self.0.remove_entity(name).await
@@ -673,6 +678,10 @@ impl AsyncClient for SimClient {
         Ok(())
     }
 
+    async fn invoke(&mut self, event: &str) -> Result<()> {
+        self.0.invoke(event).await
+    }
+
     async fn query(&mut self, q: Query) -> Result<crate::QueryProduct> {
         self.0.query(q).await
     }
@@ -701,9 +710,9 @@ impl AsyncClient for SimClient {
         self.0
             .worker
             .ctl
-            .execute(Signal::from(rpc::worker::RequestLocal::Request(
-                rpc::worker::Request::Unsubscribe(subscription_id),
-            )))
+            .execute(Signal::from(
+                rpc::worker::Request::Unsubscribe(subscription_id).into_local(),
+            ))
             .await??;
 
         Ok(())

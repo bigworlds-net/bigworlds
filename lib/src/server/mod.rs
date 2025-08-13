@@ -36,7 +36,7 @@ use crate::service::Service;
 use crate::time::Instant;
 use crate::util::{decode, encode};
 use crate::worker::{WorkerExec, WorkerId};
-use crate::{net, rpc, string, worker, Error, Result};
+use crate::{net, rpc, worker, Error, Result};
 
 use cache::Cache;
 use pov::{Client, Worker};
@@ -806,6 +806,20 @@ async fn handle_message(
                 Err(Error::WorkerNotConnected("".to_owned()))
             }
         }
+        Message::InvokeRequest(invoke_request) => {
+            if let Some(worker) = &server.lock().await.worker {
+                worker
+                    .execute(Signal::from(rpc::worker::Request::Trigger(vec![
+                        invoke_request.event,
+                    ])))
+                    .await?
+                    .discard_context()
+                    .ok()?;
+                Ok(Some(Message::OK))
+            } else {
+                Err(Error::WorkerNotConnected("".to_owned()))
+            }
+        }
     }
 }
 
@@ -958,7 +972,7 @@ impl State {
             trace!("handling prefab: {}", prefab);
             let entity_name = match ser.entity_names[i].as_str() {
                 "" => None,
-                _ => Some(string::new_truncate(&ser.entity_names[i])),
+                _ => Some(ser.entity_names[i].to_owned()),
             };
             // match &mut self.sim {
             //     SimCon::Local(sim) => {

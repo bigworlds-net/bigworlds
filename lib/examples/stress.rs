@@ -1,3 +1,5 @@
+//! Most basic stress-test, spawning a million entities into memory.
+
 use bigworlds::time::Instant;
 use bigworlds::{query, rpc, Executor, Query, Signal};
 
@@ -16,16 +18,14 @@ async fn main() -> anyhow::Result<()> {
     // Lua behaviors are incredibly memory-hungry, comparatively speaking.
     // Let's disable them for now.
     model.behaviors.clear();
-    // model.behaviors.iter_mut().for_each(|b| {
-    //     if let model::behavior::BehaviorInner::Lua { script, .. } = &mut b.inner {
-    //         *script = r#""#.to_string();
-    //     }
-    // });
 
     // Spawn a local sim instance.
     let mut sim = bigworlds::sim::spawn_from_model(model).await?;
 
     // Spawn the desired number of entities, all based on the same prefab.
+    // NOTE: by default all newly spawned entities will get instantiated in
+    // memory. See `examples/archive.rs` for an example of spawning entities
+    // straight to fs-backed archived state.
     sim.spawn_entities(Some("cube".parse()?), TARGET_ENTITY_COUNT)
         .await?;
 
@@ -67,9 +67,6 @@ async fn main() -> anyhow::Result<()> {
                                 println!("behavior: received shutdown");
                                 break;
                             }
-                            _ => {
-                                unimplemented!()
-                            }
                         },
                         Err(e) => log::warn!("err: {:?}", e),
                     }
@@ -85,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         let entities = sim.entities().await?;
         if entities.len() < TARGET_ENTITY_COUNT {
+            println!("entity count: {}", entities.len());
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         } else {
             let sys = sysinfo::System::new_all();

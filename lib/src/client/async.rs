@@ -24,6 +24,7 @@ pub trait AsyncClient {
     async fn get_model(&mut self) -> Result<Model>;
     async fn status(&mut self) -> Result<StatusResponse>;
     async fn step(&mut self, step_count: u32) -> Result<()>;
+    async fn invoke(&mut self, event: &str) -> Result<()>;
     async fn query(&mut self, q: Query) -> Result<QueryProduct>;
 
     async fn subscribe(

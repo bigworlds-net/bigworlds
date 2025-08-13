@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::executor::{LocalExec, Signal};
 use crate::leader::{State, Worker, WorkerExec};
 use crate::worker::WorkerId;
-use crate::{rpc, string, Error, Executor, Model, Result};
+use crate::{rpc, Error, Executor, Model, Result};
 
 use super::{Config, LeaderId, Status};
 

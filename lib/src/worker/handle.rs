@@ -29,18 +29,22 @@ impl Handle {
     /// Connect the worker to another remote worker over a network using the
     /// provided address.
     pub async fn connect_to_worker(&self, address: &str) -> Result<()> {
-        let req: rpc::worker::RequestLocal =
-            rpc::worker::Request::ConnectToWorker(address.parse()?).into();
-        self.ctl.execute(Signal::from(req)).await??;
+        self.ctl
+            .execute(Signal::from(
+                rpc::worker::Request::ConnectToWorker(address.parse()?).into_local(),
+            ))
+            .await??;
         Ok(())
     }
 
     /// Connect the worker to a remote leader over a network using the provided
     /// address.
     pub async fn connect_to_leader(&self, address: &str) -> Result<()> {
-        let req: rpc::worker::RequestLocal =
-            rpc::worker::Request::ConnectToLeader(address.parse()?).into();
-        self.ctl.execute(Signal::from(req)).await??;
+        self.ctl
+            .execute(Signal::from(
+                rpc::worker::Request::ConnectToLeader(address.parse()?).into_local(),
+            ))
+            .await??;
         Ok(())
     }
 

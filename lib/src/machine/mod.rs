@@ -44,11 +44,8 @@ use crate::entity::StorageIndex;
 use crate::executor::{LocalExec, Signal};
 use crate::model::Var;
 use crate::query::{Query, QueryProduct};
-use crate::{
-    rpc, CompName, EntityId, EntityName, EventName, Executor, LongString, ShortString, StringId,
-    VarType,
-};
-use crate::{string, Address};
+use crate::Address;
+use crate::{rpc, CompName, EntityId, EntityName, EventName, Executor, VarType};
 
 pub const START_STATE_NAME: &'static str = "start";
 
@@ -60,7 +57,7 @@ pub const START_STATE_NAME: &'static str = "start";
 pub struct Machine {
     behavior: Option<String>,
     /// Current state.
-    state: StringId,
+    state: String,
     worker: LocalExec<Signal<rpc::worker::Request>, crate::Result<Signal<rpc::worker::Response>>>,
 }
 
@@ -192,7 +189,7 @@ pub fn spawn(
         Box::pin(async move {
             let mut machine = Machine {
                 behavior: behavior_name_,
-                state: string::new_truncate("start"),
+                state: "start".to_owned(),
                 worker,
             };
 
@@ -207,7 +204,7 @@ pub fn spawn(
                                         // No states declared, default to
                                         // executing the whole thing.
                                         if logic.states.len() == 1 {
-                                            machine.state = string::new_truncate("_main");
+                                            machine.state = "_main".to_owned();
                                         }
                                         exec::execute(logic, &mut machine).await?;
                                     } else {
@@ -221,7 +218,7 @@ pub fn spawn(
 
                                 let mut logic = Logic::default();
                                 let mut registry = Registry {
-                                    str0: LongString::new(),
+                                    str0: String::new(),
                                     int0: 0,
                                     float0: 0.,
                                     bool0: false,
@@ -259,7 +256,7 @@ pub fn spawn(
                                     &mut logic,
                                     &mut ArrayVec::new(),
                                     &mut Registry {
-                                        str0: LongString::new(),
+                                        str0: String::new(),
                                         int0: 0,
                                         float0: 0.,
                                         bool0: false,
@@ -325,13 +322,13 @@ pub fn spawn(
 )]
 pub struct Logic {
     /// Name of the starting state
-    pub start_state: StringId,
+    pub start_state: String,
     /// List of commands
     pub commands: Vec<crate::machine::cmd::Command>,
     /// Mapping of state procedure names to their start and end lines
-    pub states: FnvHashMap<StringId, (usize, usize)>,
+    pub states: FnvHashMap<String, (usize, usize)>,
     /// Mapping of non-state procedure names to their start and end lines
-    pub procedures: FnvHashMap<ShortString, (usize, usize)>,
+    pub procedures: FnvHashMap<String, (usize, usize)>,
     /// Location info mapped for each command on the list by index
     pub cmd_location_map: Vec<crate::machine::LocationInfo>,
 }
@@ -339,7 +336,7 @@ pub struct Logic {
 impl Default for Logic {
     fn default() -> Self {
         Logic {
-            start_state: string::new_truncate(START_STATE_NAME),
+            start_state: START_STATE_NAME.to_owned(),
             commands: Vec::new(),
             states: FnvHashMap::default(),
             procedures: FnvHashMap::default(),
@@ -412,9 +409,7 @@ impl Logic {
                 .insert(n, cmd_locations[n].clone());
         }
 
-        logic
-            .states
-            .insert(string::new_truncate("_main"), (0, commands.len()));
+        logic.states.insert("_main".to_owned(), (0, commands.len()));
 
         // println!("{:?}", logic);
 
@@ -452,7 +447,7 @@ pub struct LocationInfo {
     /// Line number after trimming empty lines, aka command index
     pub line: Option<usize>,
     /// Unique tag for this location
-    pub tag: Option<StringId>,
+    pub tag: Option<String>,
     // pub behavior_name: Option<StringId>,
 }
 
@@ -517,9 +512,9 @@ pub struct ExecutionContext {
 
 /// List of "stack" variables available only to the component machine
 /// and not visible from the outside.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Registry {
-    pub str0: LongString,
+    pub str0: String,
     pub int0: i32,
     pub float0: f32,
     pub bool0: bool,
@@ -527,7 +522,7 @@ pub struct Registry {
 impl Registry {
     pub fn new() -> Registry {
         Registry {
-            str0: LongString::new(),
+            str0: String::new(),
             int0: 0,
             float0: 0.0,
             bool0: false,

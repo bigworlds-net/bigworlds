@@ -9,7 +9,7 @@ use bigworlds::{
     behavior::BehaviorHandle,
     rpc,
     sim::{self, SimConfig},
-    Error, Result, Signal, SimHandle,
+    Result, Signal, SimHandle,
 };
 
 mod common;
@@ -78,9 +78,6 @@ async fn spawn_behavior(sim: &mut SimHandle, cancel: CancellationToken) -> Resul
                                     rpc::behavior::Request::Shutdown => {
                                         let _ = s.send(Ok(Signal::new(rpc::behavior::Response::Empty, sig.ctx)));
                                     }
-                                    _ => {
-                                        let _ = s.send(Err(Error::Other("not implemented".to_owned())));
-                                    },
                                 }
                             }
                             _ = cancel.cancelled() => {

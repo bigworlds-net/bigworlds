@@ -24,8 +24,7 @@ use tokio_stream::StreamExt;
 
 use bigworlds::{
     behavior::BehaviorTarget,
-    leader,
-    node::{self, NodeConfig},
+    leader, node,
     query::{Description, Filter, Map},
     rpc,
     sim::{self, SimConfig},
@@ -53,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         let mut cancel = CancellationToken::new();
 
         runtime.block_on(async move {
-            let mut node = node::spawn(NodeConfig::default(), cancel.clone()).unwrap();
+            let mut node = node::spawn(node::Config::default(), cancel.clone()).unwrap();
             node.execute(rpc::node::Request::SpawnWorker(
                 worker::Config {
                     listeners: vec!["quic://127.0.0.1:9910".parse().unwrap()],
@@ -80,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         let mut cancel = CancellationToken::new();
 
         runtime.block_on(async move {
-            let mut node = node::spawn(NodeConfig::default(), cancel.clone()).unwrap();
+            let mut node = node::spawn(node::Config::default(), cancel.clone()).unwrap();
             node.execute(rpc::node::Request::SpawnWorker(
                 worker::Config {
                     listeners: vec!["quic://127.0.0.1:9911".parse().unwrap()],

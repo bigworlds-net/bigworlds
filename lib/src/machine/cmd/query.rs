@@ -3,6 +3,10 @@ use crate::machine::error::{Error, ErrorKind};
 
 /// Call a procedure by name.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Query {}
 
 impl Query {

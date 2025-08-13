@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding, Transport};
 use crate::rpc::msg::client_server::StatusRequest;
 use crate::rpc::msg::{Message, RegisterClientRequest};
-use crate::{query, string, Error, Query, QueryProduct, Result, Var};
+use crate::{query, Error, Query, QueryProduct, Result, Var};
 use crate::{Executor, LocalExec};
 
 type Interface = LocalExec<(ConnectionOrAddress, Message), Result<Message>>;
@@ -118,8 +118,8 @@ async fn world_query(
 ) -> Result<impl IntoResponse> {
     let query = Query::default()
         .description(query::Description::Addressed)
-        .filter(query::Filter::Name(vec![string::new_truncate(&entity)]))
-        .filter(query::Filter::Component(string::new_truncate(&component)));
+        .filter(query::Filter::Name(vec![entity]))
+        .filter(query::Filter::Component(component));
 
     let resp = interface
         .execute((

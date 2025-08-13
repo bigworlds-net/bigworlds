@@ -1,6 +1,10 @@
 use fnv::FnvHashMap;
 
-use crate::{time::Instant, worker, Address, Result, StringId, VarType};
+use crate::{
+    query::{self, Limits},
+    time::Instant,
+    worker, Address, Result, VarType,
+};
 
 use super::{AddressedTypedMap, Description, Filter, Layout, Map, Query, QueryProduct};
 
@@ -10,12 +14,25 @@ pub async fn process_query(
 ) -> Result<QueryProduct> {
     let now = Instant::now();
 
-    let mut selected_entities = part.entities.keys().map(|v| v).collect::<Vec<&StringId>>();
-    let entities = &part.entities;
+    let mut selected_entities = part.entities.keys().collect::<Vec<&String>>();
+    let mut selected_entities_archived = if query.archive == query::Archive::Include {
+        part.archive
+            .keys()
+            .filter_map(|k| k.ok())
+            .collect::<Vec<fjall::Slice>>()
+    } else {
+        vec![]
+    };
+    // println!("stringids took: {}ms", now.elapsed().as_millis());
 
-    // first apply filters and get a list of selected entities
+    // NOTE: only using part.get_entity() counts towards entity *access* as
+    // understood by the system at large. Reading entities during the filtering
+    // phase doesn't count towards real access.
+
+    // First apply filters and get a list of selected entities.
     for filter in &query.filters {
         let mut to_retain = Vec::new();
+        let mut to_retain_archive = Vec::new();
         let insta = Instant::now();
         match filter {
             Filter::Id(desired_ids) => {
@@ -28,22 +45,36 @@ pub async fn process_query(
                 // }
             }
             Filter::Name(desired_names) => {
-                for selected_entity in &selected_entities {
-                    if !desired_names.contains(selected_entity) {
-                        continue;
+                for desired_name in desired_names {
+                    if query.archive != query::Archive::Ignore {
+                        let name_bytes: fjall::Slice = desired_name.into();
+                        if selected_entities_archived.contains(&name_bytes) {
+                            to_retain_archive.push(name_bytes);
+                        }
                     }
-                    to_retain.push(selected_entity.to_owned());
+
+                    if selected_entities.contains(&desired_name) {
+                        to_retain.push(desired_name);
+                    }
                 }
+
+                // for selected_entity in &selected_entities {
+                //     if !desired_names.contains(selected_entity) {
+                //         continue;
+                //     }
+                //     to_retain.push(selected_entity.to_owned());
+                // }
             }
             Filter::AllComponents(desired_components) => {
                 'ent: for entity_id in &selected_entities {
-                    if let Some(entity) = entities.get(entity_id.as_str()) {
+                    // if let Ok(entity) = part.get_entity(entity_id) {
+                    if let Some(entity) = part.entities.get(entity_id.as_str()) {
                         for desired_component in desired_components {
                             if !entity.components.contains(desired_component) {
                                 continue 'ent;
                             }
                         }
-                        to_retain.push(*entity_id);
+                        to_retain.push(entity_id);
                     }
                 }
             }
@@ -192,115 +223,173 @@ pub async fn process_query(
                 for (id, entity) in &part.entities {
                     if entity.components.contains(comp_name) {
                         to_retain.push(id);
+                        if let Some(entity_limit) = query.limits.entities {
+                            if to_retain.len() >= entity_limit as usize {
+                                break;
+                            }
+                        }
                     }
                 }
             }
             Filter::SomeComponents(_) => todo!(),
             Filter::VarRange(addr, low, high) => {
-                for entity_name in selected_entities {
-                    let entity = if let Some(entity) = part.entities.get(entity_name) {
-                        entity
-                    } else {
-                        continue;
-                    };
-                    let var = if let Ok(var) = entity.storage.get_var(&addr.as_storage_index()) {
-                        var
-                    } else {
-                        continue;
-                    };
+                unimplemented!();
+                // for entity_name in selected_entities {
+                //     let entity = if let Some(entity) = part.entities.get(entity_name) {
+                //         entity
+                //     } else {
+                //         continue;
+                //     };
+                //     let var = if let Ok(var) = entity.storage.get_var(&addr.as_storage_index()) {
+                //         var
+                //     } else {
+                //         continue;
+                //     };
 
-                    match addr.var_type {
-                        VarType::String => todo!(),
-                        VarType::Int => {
-                            let int = var.as_int()?;
-                            if int > &low.to_int() && int < &high.to_int() {
-                                to_retain.push(entity_name);
-                            }
-                        }
-                        VarType::Float => {
-                            let float = var.as_float()?;
-                            if float > &low.to_float() && float < &high.to_float() {
-                                to_retain.push(entity_name);
-                            }
-                        }
-                        VarType::Bool => todo!(),
-                        _ => unimplemented!(),
-                    }
-                }
+                //     match addr.var_type {
+                //         VarType::String => todo!(),
+                //         VarType::Int => {
+                //             let int = var.as_int()?;
+                //             if int > &low.to_int() && int < &high.to_int() {
+                //                 to_retain.push(entity_name);
+                //             }
+                //         }
+                //         VarType::Float => {
+                //             let float = var.as_float()?;
+                //             if float > &low.to_float() && float < &high.to_float() {
+                //                 to_retain.push(entity_name);
+                //             }
+                //         }
+                //         VarType::Bool => todo!(),
+                //         _ => unimplemented!(),
+                //     }
+                // }
             }
             Filter::AttrRange(_, _, _) => todo!(),
         }
 
+        if let Limits {
+            entities: Some(entity_limit),
+            product_entries,
+            size_bytes,
+        } = query.limits
+        {
+            to_retain.truncate(entity_limit as usize);
+            to_retain_archive.truncate(entity_limit as usize);
+        }
+
         selected_entities = to_retain;
+        selected_entities_archived = to_retain_archive;
     }
 
-    trace!("query: selected entities: {:?}", selected_entities);
-    trace!(" query time (filtering): {}", now.elapsed().as_millis());
+    trace!("query: selected entities: {}", selected_entities.len());
+    trace!(
+        "query: selected entities archived: {}",
+        selected_entities_archived.len()
+    );
+    trace!("query time (filtering): {}", now.elapsed().as_millis());
 
     let now = Instant::now();
 
+    let selected_entities = selected_entities.into_iter().cloned().collect::<Vec<_>>();
     let mut mapped_data = FnvHashMap::default();
-    for entity_id in selected_entities {
-        for mapping in &query.mappings {
-            match mapping {
-                Map::All => {
-                    if let Some(entity) = entities.get(entity_id) {
-                        for ((comp_name, var_name), var) in &entity.storage.map {
-                            mapped_data.insert((entity_id, comp_name, var_name), var);
-                        }
-                    }
-                    // we've selected everything, disregard other mappings
-                    break;
-                }
-                Map::Var(map_var_type, map_var_name) => {
-                    if let Some(entity) = entities.get(entity_id) {
-                        for ((comp_name, var_name), var) in &entity.storage.map {
-                            if &var.get_type() == map_var_type && var_name == map_var_name {
-                                mapped_data.insert((entity_id, comp_name, var_name), var);
+    for mapping in &query.mappings {
+        match mapping {
+            Map::All => {
+                if query.archive != query::Archive::Ignore {
+                    for entity_id_archived in selected_entities_archived {
+                        let entity_id =
+                            unsafe { String::from_utf8_unchecked(entity_id_archived.to_vec()) };
+                        if let Ok(entity) = part.get_entity_archived(&entity_id) {
+                            for ((comp_name, var_name), var) in entity.storage.map {
+                                mapped_data.insert((entity_id.clone(), comp_name, var_name), var);
                             }
                         }
                     }
                 }
-                Map::VarName(map_var_name) => {
-                    if let Some(entity) = entities.get(entity_id) {
+                for entity_id in &selected_entities {
+                    if let Ok(entity) = part.get_entity(entity_id) {
+                        for ((comp_name, var_name), var) in &entity.storage.map {
+                            mapped_data.insert(
+                                (
+                                    (*entity_id).to_owned(),
+                                    comp_name.to_owned(),
+                                    var_name.to_owned(),
+                                ),
+                                var.clone(),
+                            );
+                        }
+                    }
+                }
+                // we've selected everything, disregard other mappings
+                break;
+            }
+            // Map::Var(map_var_type, map_var_name) => {
+            //     if let Some(entity) = entities.get(entity_id) {
+            //         for ((comp_name, var_name), var) in &entity.storage.map {
+            //             if &var.get_type() == map_var_type && var_name == map_var_name {
+            //                 mapped_data.insert((entity_id, comp_name, var_name), var);
+            //             }
+            //         }
+            //     }
+            // }
+            Map::VarName(map_var_name) => {
+                for entity_id in &selected_entities {
+                    if let Ok(entity) = part.get_entity(entity_id) {
                         for ((comp_name, var_name), var) in &entity.storage.map {
                             if var_name == map_var_name {
-                                mapped_data.insert((entity_id, comp_name, var_name), var);
+                                mapped_data.insert(
+                                    (
+                                        (*entity_id).to_owned(),
+                                        comp_name.to_owned(),
+                                        var_name.to_owned(),
+                                    ),
+                                    var.clone(),
+                                );
                             }
                         }
                     }
                 }
-                Map::Components(map_components) => {
-                    for map_component in map_components {
-                        if let Some(entity) = entities.get(entity_id) {
-                            for ((comp_name, var_name), var) in &entity.storage.map {
-                                if comp_name == map_component {
-                                    mapped_data.insert((entity_id, comp_name, var_name), var);
-                                }
-                            }
-                        }
-                    }
-                }
-                Map::Component(map_component) => {
-                    if let Some(entity) = entities.get(entity_id) {
+            }
+            // Map::Components(map_components) => {
+            //     for map_component in map_components {
+            //         if let Some(entity) = entities.get(entity_id) {
+            //             for ((comp_name, var_name), var) in &entity.storage.map {
+            //                 if comp_name == map_component {
+            //                     mapped_data.insert((entity_id, comp_name, var_name), var);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+            Map::Component(map_component) => {
+                for entity_id in &selected_entities {
+                    if let Ok(entity) = part.get_entity(entity_id) {
                         for ((comp_name, var_name), var) in &entity.storage.map {
                             if comp_name == map_component {
-                                mapped_data.insert((entity_id, comp_name, var_name), var);
+                                mapped_data.insert(
+                                    (
+                                        (*entity_id).to_owned(),
+                                        comp_name.to_owned(),
+                                        var_name.to_owned(),
+                                    ),
+                                    var.clone(),
+                                );
                             }
                         }
                     }
                 }
-                Map::SelectAddrs(addrs) => {
-                    if let Some(entity) = entities.get(entity_id) {
-                        for addr in addrs {
-                            if let Ok(var) = entity.storage.get_var(&addr.storage_index()) {
-                                mapped_data.insert((entity_id, &addr.comp, &addr.var_name), var);
-                            }
-                        }
-                    }
-                }
-                _ => unimplemented!(),
             }
+            // Map::SelectAddrs(addrs) => {
+            //     if let Some(entity) = entities.get(entity_id) {
+            //         for addr in addrs {
+            //             if let Ok(var) = entity.storage.get_var(&addr.storage_index()) {
+            //                 mapped_data.insert((entity_id, &addr.comp, &addr.var_name), var);
+            //             }
+            //         }
+            //     }
+            // }
+            _ => unimplemented!(),
         }
     }
 

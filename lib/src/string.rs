@@ -1,12 +1,9 @@
-//! Introduces functionality for bridging different string representations
-//! supported by the library.
+//! Bridging different string representations supported by the library.
 
 use arrayvec::{ArrayString, ArrayVec};
 
 use crate::error::{Error, Result};
 
-// Default length is 23 characters, but it can be restricted to just
-// 10 characters using the `tiny_stringid` feature.
 #[cfg(all(feature = "small_stringid", not(feature = "tiny_stringid")))]
 pub const STRING_ID_SIZE: usize = 23;
 #[cfg(all(not(feature = "small_stringid"), feature = "tiny_stringid"))]
@@ -20,6 +17,8 @@ pub type StringId = ArrayString<STRING_ID_SIZE>;
 pub type StringId = String;
 
 /// Short fixed-size string.
+///
+/// NOTE: at 23 characters long it equals the stack size of a regular `String`.
 pub type ShortString = ArrayString<23>;
 /// Long fixed-size string.
 pub type LongString = ArrayString<100>;

@@ -15,6 +15,10 @@ pub mod ws;
 
 /// Unified representation of an encoding, transport and address triple.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct CompositeAddress {
     pub encoding: Option<Encoding>,
     pub transport: Option<Transport>,
@@ -101,9 +105,13 @@ impl CompositeAddress {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Address {
     Net(SocketAddr),
-    NetUrl(Url),
+    NetUrl(String),
     /// Addressing scheme for file-based transports such as unix domain
     /// sockets.
     File(String),
@@ -115,7 +123,7 @@ impl FromStr for Address {
         if let Ok(mut socket_addrs) = s.to_socket_addrs() {
             Ok(Self::Net(socket_addrs.next().unwrap()))
         } else if let Ok(url) = s.parse::<Url>() {
-            Ok(Self::NetUrl(url))
+            Ok(Self::NetUrl(s.to_string()))
         } else {
             Ok(Self::File(s.to_string()))
         }
@@ -161,6 +169,10 @@ pub fn get_available_address() -> Result<SocketAddr> {
 
 /// List of possible network transports.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Transport {
     /// Modern UDP-based transport.
     Quic,
@@ -230,6 +242,10 @@ impl Transport {
 ///
 /// TODO: consider adding protobufs as a standalone encoding scheme.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Encoding {
     /// Fast binary format for communication between Rust apps.
     #[default]

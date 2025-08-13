@@ -20,7 +20,7 @@ archive = ["bigworlds/archive"]
 msgpack = ["bigworlds/msgpack_encoding"]
 
 [dependencies]
-bigworlds = { path = "../lib", version = "0.1.1", default-features = false }
+bigworlds = { path = "../lib", version = "0.1.1", default-features = true }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-stream = "0.1"

@@ -11,6 +11,10 @@ pub type StorageIndex = (CompName, VarName);
 /// Entity's data storage structure.
 // TODO: benchmark performance of the alternative storage layouts
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Storage {
     pub map: FnvHashMap<StorageIndex, Var>,
 }

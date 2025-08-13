@@ -14,6 +14,10 @@ use super::forin::ForIn;
 pub const COMMAND_NAMES: [&'static str; 1] = ["end"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct End {}
 
 impl End {

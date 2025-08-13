@@ -10,7 +10,6 @@ use bigworlds::{
     net::CompositeAddress,
     query::{self, Trigger},
     rpc::msg::Message,
-    string,
 };
 
 use crate::{ui, world::World};
@@ -59,7 +58,7 @@ impl App {
                     .subscribe(
                         vec![Trigger::StepEvent],
                         Query::default()
-                            .filter(query::Filter::Component(string::new_truncate("position")))
+                            .filter(query::Filter::Component("position".to_owned()))
                             .map(query::Map::All)
                             .description(query::Description::NativeDescribed),
                     )

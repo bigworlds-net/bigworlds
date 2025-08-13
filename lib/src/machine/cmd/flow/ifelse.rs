@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 
 use crate::address::ShortLocalAddress;
-use crate::{address, string, Address, CompName, Var};
+use crate::{address, Address, CompName, Var};
 
 use crate::entity::{Entity, Storage};
 use crate::model::Model;
@@ -19,6 +19,10 @@ pub const IF_COMMAND_NAMES: [&'static str; 1] = ["if"];
 pub const ELSE_COMMAND_NAMES: [&'static str; 2] = ["else", "else_if"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Condition {
     // Command()
     AssertEqual((Address, Var)),
@@ -27,7 +31,7 @@ pub enum Condition {
     BoolValue(bool),
 }
 impl Condition {
-    pub async fn evaluate(&self, machine: &Machine, comp_name: &CompName) -> Result<bool> {
+    pub async fn evaluate(&self, machine: &Machine, comp_name: &str) -> Result<bool> {
         match self {
             Condition::AssertEqual((addr, right)) => {
                 let left = machine.get_var(addr.to_owned()).await?;
@@ -49,11 +53,15 @@ impl Condition {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct If {
     pub condition: Condition,
     pub start: usize,
     pub end: usize,
-    pub else_lines: SmallVec<[usize; 10]>,
+    pub else_lines: Vec<usize>,
 }
 
 impl If {
@@ -126,7 +134,7 @@ impl If {
                 condition,
                 start: line,
                 end: positions.0,
-                else_lines: SmallVec::from(positions.1),
+                else_lines: positions.1,
             }),
             None => Err(Error::new(
                 location.clone(),
@@ -146,12 +154,7 @@ impl If {
         for (n, el) in self.else_lines.iter().enumerate() {
             else_lines_arr[n] = *el;
         }
-        if self
-            .condition
-            .evaluate(machine, &string::new_truncate("todo"))
-            .await
-            .unwrap()
-        {
+        if self.condition.evaluate(machine, "todo").await.unwrap() {
             debug!("evaluated to true");
             let next_line = if self.else_lines.is_empty() {
                 self.end
@@ -202,6 +205,10 @@ pub struct ElseIf {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Else {}
 impl Else {
     pub fn new(args: Vec<String>) -> Result<Else> {

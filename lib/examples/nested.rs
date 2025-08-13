@@ -1,14 +1,14 @@
 //! This example showcases basic simulation nesting.
 
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use bigworlds::{
     behavior::BehaviorTarget,
     rpc,
     sim::{self, SimConfig},
-    string, Error, Signal,
+    Signal,
 };
-use tokio_util::sync::CancellationToken;
 
 mod common;
 
@@ -69,15 +69,15 @@ async fn main() -> anyhow::Result<()> {
                         // sim but they are not propagated from the top level
                         // sim by default. We would have to explicitly pass
                         // events to make it work.
-                        let machine = nested_sim.spawn_machine(None, vec![string::new_truncate("step")]).await?;
+                        let machine = nested_sim.spawn_machine(None, vec!["step".to_owned()]).await?;
                         // Execute a spawn command, spawning a new entity based
                         // on the prefab our fork has inherited from the
                         // original model.
                         let cube_name = "nested_cube_0";
                         machine
                             .execute_cmd(bigworlds::machine::Command::Spawn(bigworlds::machine::cmd::spawn::Spawn {
-                                prefab: Some(string::new_truncate("cube")),
-                                spawn_name: Some(string::new_truncate(cube_name)),
+                                prefab: Some("cube".to_owned()),
+                                spawn_name: Some(cube_name.to_owned()),
                                 out: None,
                             }))
                             .await?;
@@ -105,9 +105,6 @@ async fn main() -> anyhow::Result<()> {
                                             nested_sim.shutdown().await?;
                                             let _ = s.send(Ok(Signal::new(rpc::behavior::Response::Empty, sig.ctx)));
                                         }
-                                        _ => {
-                                            let _ = s.send(Err(Error::Other("not implemented".to_owned())));
-                                        },
                                     }
                                 }
                                 _ = cancel.cancelled() => {

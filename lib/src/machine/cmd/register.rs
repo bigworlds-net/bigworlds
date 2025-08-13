@@ -7,7 +7,7 @@ use std::str::FromStr;
 use shlex::Shlex;
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress};
-use crate::{model, rpc, string, CompName, EntityId, Float, ShortString, StringId, Var};
+use crate::{model, rpc, CompName, EntityId, Float, Var};
 
 use crate::entity::Storage;
 use crate::executor::{Executor, Signal};
@@ -23,6 +23,10 @@ use crate::machine::{self, Machine};
 use crate::machine::{CallInfo, CallStackVec, CommandPrototype, ComponentCallInfo};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct RegisterVar {
     comp: CompName,
     addr: ShortLocalAddress,
@@ -86,7 +90,7 @@ pub struct Extend {
     // args: Vec<String>,
     /// Partial address acting as a signature for target component,
     /// including entity type but not the entity id
-    pub(crate) comp_signature: StringId,
+    pub(crate) comp_signature: String,
     pub(crate) source_files: Vec<String>,
     pub(crate) location: LocationInfo,
 }
@@ -101,7 +105,7 @@ impl Extend {
                 ),
             ));
         }
-        let comp_signature = string::new_truncate(&args[0]);
+        let comp_signature = args[0].to_owned();
         let mut source_files = Vec::new();
         for i in 1..args.len() {
             // check for potential recursion and abort if present
@@ -134,13 +138,13 @@ impl Extend {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterEvent {
     /// Name of the event
-    name: StringId,
+    name: String,
 }
 
 impl RegisterEvent {
     pub fn new(args: Vec<String>, location: &LocationInfo) -> Result<Self> {
         Ok(Self {
-            name: string::new_truncate(&args[0]),
+            name: args[0].to_owned(),
         })
     }
 
@@ -155,11 +159,15 @@ impl RegisterEvent {
 
 /// Register an entity prefab, specifying a name and a set of components.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct RegisterEntityPrefab {
     /// Name of the entity prefab
-    name: StringId,
+    name: String,
     /// List of components defining the prefab
-    components: Vec<StringId>,
+    components: Vec<String>,
 
     setters: Vec<(LocalAddress, Var)>,
 }
@@ -171,12 +179,8 @@ impl RegisterEntityPrefab {
         options.optopt("", "set", "", "");
         let matches = options.parse(&args)?;
         Ok(Self {
-            name: string::new_truncate(&args[0]),
-            components: matches
-                .opt_strs("component")
-                .into_iter()
-                .map(|a| string::new_truncate(&a))
-                .collect(),
+            name: args[0].to_owned(),
+            components: matches.opt_strs("component"),
             setters: matches
                 .opt_strs("set")
                 .into_iter()
@@ -215,7 +219,7 @@ impl RegisterEntityPrefab {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct RegisterComponent {
-    pub name: StringId,
+    pub name: String,
     // pub trigger_events: Vec<StringId>,
     // pub source_comp: StringId,
     // pub start_line: usize,
@@ -276,8 +280,12 @@ impl RegisterComponent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct RegisterTrigger {
-    pub name: StringId,
+    pub name: String,
     pub comp: CompName,
 }
 
@@ -286,7 +294,7 @@ impl RegisterTrigger {
         // TODO handle cases with wrong number of args
 
         Ok(RegisterTrigger {
-            name: string::new_truncate(&args[0]),
+            name: args[0].to_owned(),
             comp: Default::default(),
         })
     }

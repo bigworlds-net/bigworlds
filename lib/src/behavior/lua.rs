@@ -2,8 +2,8 @@ use mlua::{Lua, LuaSerdeExt, UserData, UserDataMethods};
 use tokio_stream::StreamExt;
 
 use crate::{
-    address::LocalAddress, executor::Signal, rpc, string, Address, EntityName, Error, EventName,
-    Executor, LocalExec, Result, StringId, Var, VarType,
+    address::LocalAddress, executor::Signal, rpc, Address, EntityName, Error, EventName, Executor,
+    LocalExec, Result, Var, VarType,
 };
 
 use super::{BehaviorHandle, BehaviorTarget};
@@ -88,9 +88,7 @@ impl UserData for WorkerExec {
             tokio::spawn(async move {
                 let response = this
                     .0
-                    .execute(Signal::from(rpc::worker::Request::Trigger(vec![
-                        string::new_truncate(&event),
-                    ])))
+                    .execute(Signal::from(rpc::worker::Request::Trigger(vec![event])))
                     .await
                     .unwrap()
                     // .map_err(|e| e.into())?;

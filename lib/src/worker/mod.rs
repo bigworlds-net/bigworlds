@@ -35,7 +35,7 @@ use crate::rpc::Participant;
 use crate::server::{ServerExec, ServerId};
 use crate::util::{decode, encode};
 use crate::worker::manager::ManagerExec;
-use crate::{behavior, leader, net, rpc, string, Model, Query, QueryProduct, Result};
+use crate::{behavior, leader, net, rpc, Model, Query, QueryProduct, Result};
 
 use part::Partition;
 use pov::{Leader, LeaderSituation, OtherWorker, Server};
@@ -140,7 +140,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
         LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
     let (local_leader_executor, mut local_leader_stream, _) =
         LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
-    let (local_behavior_executor, mut local_behavior_stream, _) =
+    let (local_behavior_executor, mut local_behavior_stream, mut local_behavior_stream_multi) =
         LocalExec::<Signal<Request>, Result<Signal<Response>>>::new(20);
     let (local_server_executor, mut local_server_stream, mut local_server_stream_multi) =
         LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
@@ -155,6 +155,10 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     let mut state = State {
         id,
         listeners: config.listeners.clone(),
+        part: Some(Partition::new(
+            local_behavior_executor.clone(),
+            config.partition.clone(),
+        )?),
         config,
         // TODO: validate that the listener addresses we're passing here were
         // actually valid and actual listeners were started on those
@@ -164,7 +168,6 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
         blocked_watch: blocked,
         clock_watch: clock,
         model: None,
-        part: Some(Partition::new(local_behavior_executor.clone())?),
         subscriptions: vec![],
     };
 
@@ -248,6 +251,24 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                             local_behavior_executor,
                             net_exec.clone(),
                             None,
+                            cancel
+                        ).await;
+                        s.send(resp);
+                    });
+                },
+                Some((sig, s)) = local_behavior_stream_multi.next() => {
+                    let worker = manager_.clone();
+                    let local_behavior_executor = local_behavior_executor_c.clone();
+                    let net_exec = net_executor.clone();
+                    let cancel = cancel_.clone();
+                    tokio::spawn(async move {
+                        let resp = handle_request(
+                            sig.payload,
+                            sig.ctx,
+                            worker,
+                            local_behavior_executor,
+                            net_exec.clone(),
+                            Some(s.clone()),
                             cancel
                         ).await;
                         s.send(resp);
@@ -365,8 +386,8 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                                     trace!("worker orphan: connecting to spawned leader");
                                                     // HACK: the way we build the leader address is
                                                     // suboptimal.
-                                                    let req: rpc::worker::RequestLocal =
-                                                        rpc::worker::Request::ConnectToLeader(format!("127.0.0.1:{}", leader_addr.port()).parse().unwrap()).into();
+                                                    let req =
+                                                        rpc::worker::Request::ConnectToLeader(format!("127.0.0.1:{}", leader_addr.port()).parse().unwrap()).into_local();
                                                     local_ctl_executor.execute(Signal::from(req)).await.unwrap().unwrap();
                                                 },
                                                 _ => {
@@ -677,6 +698,10 @@ async fn handle_request(
     debug!("worker: processing request: {req}");
 
     match req {
+        Request::PullConfig(config) => {
+            manager.pull_config(config).await?;
+            Ok(Signal::new(Response::Empty, ctx))
+        }
         Request::ConnectToLeader(address) => {
             let bind = SocketAddr::from_str("0.0.0.0:0").unwrap();
             // let endpoint = quinn::Endpoint::client(a).unwrap();
@@ -783,7 +808,7 @@ async fn handle_request(
             }
             trace!("sent clockchangedto to all servers");
 
-            let event = string::new_truncate("step");
+            let event = "step".to_owned();
 
             let broadcast = manager.get_unsynced_behavior_tx().await?;
             broadcast
@@ -1149,7 +1174,7 @@ async fn handle_request(
                 ctx
             );
 
-            entity.meta.last_moved = Some(Utc::now());
+            entity.meta.last_moved = Some(Utc::now().timestamp() as u32);
 
             // Store the incoming entity as our own.
             manager.add_entity(name, entity).await?;
@@ -1163,14 +1188,8 @@ async fn handle_request(
             Ok(Signal::new(Response::Entity(entity), ctx))
         }
         Request::EntityList => {
-            let resp = manager.execute(manager::Request::GetEntities).await??;
-            if let manager::Response::Entities(entities) = resp {
-                Ok(Signal::new(Response::EntityList(entities), ctx))
-            } else {
-                Err(Error::UnexpectedResponse(format!(
-                    "expected Response::Entities"
-                )))
-            }
+            let entities = manager.get_entities().await?;
+            Ok(Signal::new(Response::EntityList(entities), ctx))
         }
         Request::NewRequirements {
             ram_mb,
@@ -1234,6 +1253,22 @@ async fn handle_request(
                             .await;
                         // println!("resp: {resp:?}");
                     }
+                }
+            }
+
+            // Process event-trigered subscriptions.
+            for event in events {
+                let subs = manager.get_subscriptions().await?;
+                for sub in subs {
+                    for trigger in &sub.triggers {
+                        if let Trigger::Event(event) = trigger {
+                            continue;
+                        }
+                    }
+                    let product = manager.process_query(sub.query).await?;
+                    sub.sender
+                        .send(Ok(Signal::from(Response::Query(product))))
+                        .await;
                 }
             }
 
@@ -1364,7 +1399,9 @@ async fn handle_request(
                     if let Some(cooldown_ms) = config.entity_migration_cooldown_ms {
                         if let Some(last_moved) = entity.meta.last_moved {
                             if Utc::now()
-                                .signed_duration_since(last_moved)
+                                .signed_duration_since(
+                                    chrono::DateTime::from_timestamp(last_moved as i64, 0).unwrap(),
+                                )
                                 .num_milliseconds()
                                 < cooldown_ms as i64
                             {

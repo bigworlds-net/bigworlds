@@ -130,7 +130,7 @@ where
     let path = PathBuf::from_str(file_path).unwrap();
     let d: T = match path.extension().unwrap().to_str().unwrap() {
         "toml" | "tml" => toml::from_slice(&bytes)?,
-        _ => unimplemented!(),
+        _ => unimplemented!("{:?}", path.to_str()),
     };
     Ok(d)
 }

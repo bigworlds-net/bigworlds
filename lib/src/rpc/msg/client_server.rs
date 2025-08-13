@@ -11,12 +11,20 @@ use super::Message;
 /// Requests a simple `PingResponse` message. Can be used to check
 /// the connection to the server.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct PingRequest {
     pub bytes: Vec<u8>,
 }
 
 /// Response to `PingRequest` message.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct PingResponse {
     pub bytes: Vec<u8>,
 }
@@ -24,6 +32,10 @@ pub struct PingResponse {
 /// Requests a few variables related to the current status of
 /// the server.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct StatusRequest {
     pub format: String,
 }
@@ -37,6 +49,10 @@ impl Into<Message> for StatusRequest {
 /// Response containing a few variables related to the current status of
 /// the server.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct StatusResponse {
     pub name: String,
     pub description: String,
@@ -67,6 +83,10 @@ pub struct StatusResponse {
 /// A blocking client is one that has to explicitly agree for the server to
 /// start processing the next tick/turn.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct RegisterClientRequest {
     pub name: String,
     pub is_blocking: bool,
@@ -79,6 +99,10 @@ pub struct RegisterClientRequest {
 
 /// Response to a `RegisterClientRequest` message.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct RegisterClientResponse {
     pub client_id: String,
     pub encoding: Encoding,
@@ -87,16 +111,28 @@ pub struct RegisterClientResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct QueryRequest {
     pub query: crate::query::Query,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct NativeQueryRequest {
     pub query: crate::query::Query,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct NativeQueryResponse {
     pub query_product: crate::query::QueryProduct,
     pub error: Option<String>,
@@ -111,12 +147,20 @@ pub struct NativeQueryResponse {
 /// `selection` is a list of addresses that can be used to select data
 /// for transfer.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct DataTransferRequest {
     pub transfer_type: String,
     pub selection: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 // #[serde(untagged)]
 pub enum TransferResponseData {
     Typed(TypedSimDataPack),
@@ -132,11 +176,19 @@ pub enum TransferResponseData {
 ///
 /// `error` contains the report of any errors that might have occurred.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct DataTransferResponse {
     pub data: TransferResponseData,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ScheduledDataTransferRequest {
     pub event_triggers: Vec<String>,
     pub transfer_type: String,
@@ -144,11 +196,19 @@ pub struct ScheduledDataTransferRequest {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct VarSimDataPackOrdered {
     pub vars: Vec<crate::Var>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct VarSimDataPack {
     pub vars: FnvHashMap<(crate::EntityName, crate::CompName, crate::VarName), crate::Var>,
 }
@@ -158,6 +218,10 @@ pub struct VarSimDataPack {
 /// Each data type is represented by a set of key-value pairs, where
 /// keys are addresses represented with strings.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct TypedSimDataPack {
     pub strings: HashMap<Address, String>,
     pub ints: HashMap<Address, crate::Int>,
@@ -226,18 +290,30 @@ impl TypedSimDataPack {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct TypedDataTransferRequest {
     pub transfer_type: String,
     pub selection: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct TypedDataTransferResponse {
     pub data: TypedSimDataPack,
     pub error: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum PullRequestData {
     /// Request to pull a key-value map of addresses and vars in string-form
     Typed(TypedSimDataPack),
@@ -254,6 +330,10 @@ pub enum PullRequestData {
 /// Request the server to pull provided data into the main simulation
 /// database.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct DataPullRequest {
     pub data: PullRequestData,
 }
@@ -262,6 +342,10 @@ pub struct DataPullRequest {
 ///
 /// `error` contains the report of any errors that might have occurred.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct DataPullResponse {
     pub error: String,
 }
@@ -269,6 +353,10 @@ pub struct DataPullResponse {
 /// Request the server to pull provided data into the main simulation
 /// database.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct TypedDataPullRequest {
     pub data: TypedSimDataPack,
 }
@@ -277,6 +365,10 @@ pub struct TypedDataPullRequest {
 ///
 /// `error` contains the report of any errors that might have occurred.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct TypedDataPullResponse {
     pub error: String,
 }
@@ -300,6 +392,10 @@ pub struct TypedDataPullResponse {
 /// only after a number of ticks equal to the value of `tick_count`
 /// is processed.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct AdvanceRequest {
     /// Number of steps to advance the simulation by
     pub step_count: u32,
@@ -313,12 +409,20 @@ pub struct AdvanceRequest {
 /// Possible errors include:
 /// - `ClientIsNotBlocking`
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct AdvanceResponse {
     pub error: String,
 }
 
 /// Requests the server to spawn a number of entities.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct SpawnEntitiesRequest {
     /// List of entity prefabs to be spawned as new entities
     pub entity_prefabs: Vec<String>,
@@ -328,6 +432,10 @@ pub struct SpawnEntitiesRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct SpawnEntitiesResponse {
     /// Names of entities that were spawned as the result of the request,
     /// order from the request is preserved
@@ -337,6 +445,10 @@ pub struct SpawnEntitiesResponse {
 
 /// Requests the server to export a snapshot.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ExportSnapshotRequest {
     /// Name for the snapshot file
     pub name: String,
@@ -347,6 +459,10 @@ pub struct ExportSnapshotRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ExportSnapshotResponse {
     pub error: String,
     pub snapshot: Vec<u8>,
@@ -354,9 +470,17 @@ pub struct ExportSnapshotResponse {
 
 /// Requests the server to list all scenarios for the currently loaded model.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ListScenariosRequest {}
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ListScenariosResponse {
     pub scenarios: Vec<String>,
     pub error: String,
@@ -365,6 +489,10 @@ pub struct ListScenariosResponse {
 /// Requests the server to initialize new simulation run using the provided
 /// scenario name.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct LoadScenarioRequest {
     pub scenario: String,
 }
@@ -379,6 +507,10 @@ impl Into<Message> for LoadScenarioRequest {
 /// - `ScenarioNotFound`
 /// - `FailedCreatingSimInstance`
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct LoadScenarioResponse {
     pub error: String,
 }
@@ -393,12 +525,20 @@ pub struct LoadScenarioResponse {
 /// laid out "flat", regardless of how they may have originally
 /// been organized into multiple directories, etc.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct LoadRemoteScenarioRequest {
     pub scenario_manifest: Vec<u8>,
     pub modules: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct UploadProjectRequest {
     pub archive: Vec<u8>,
 }
@@ -410,6 +550,10 @@ impl Into<Message> for UploadProjectRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct UploadProjectResponse {
     pub error: String,
 }
@@ -417,6 +561,21 @@ pub struct UploadProjectResponse {
 impl Into<Message> for UploadProjectResponse {
     fn into(self) -> Message {
         Message::UploadProjectArchiveResponse(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+pub struct InvokeRequest {
+    pub event: String,
+}
+
+impl Into<Message> for InvokeRequest {
+    fn into(self) -> Message {
+        Message::InvokeRequest(self)
     }
 }
 

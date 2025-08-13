@@ -1,8 +1,14 @@
 use crate::net::CompositeAddress;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Config {
     pub listeners: Vec<CompositeAddress>,
+
+    pub partition: super::part::Config,
 
     /// Topology strategy for the worker to follow.
     pub topo_strategy: TopoStrategy,
@@ -52,6 +58,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listeners: vec![],
+            partition: Default::default(),
             topo_strategy: Default::default(),
             orphan_fork: true,
             behaviors_follow_model_changes: true,
@@ -82,6 +89,10 @@ impl Default for Config {
 /// is currently fixed and involves leader being connected directly to all
 /// workers at all times.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum TopoStrategy {
     /// Maintain connection to only one other worker.
     ///

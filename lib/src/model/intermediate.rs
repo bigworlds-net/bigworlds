@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use fnv::FnvHashMap;
 use uuid::Uuid;
 
-use crate::{string, util, CompName, EventName, MODEL_MANIFEST_FILE};
-use crate::{Result, StringId};
+use crate::{util, CompName, EventName, Result, MODEL_MANIFEST_FILE};
 
 /// Intermediate model representation. It's existence is predicated by the need
 /// to resolve differences between the readily deserializable file structure
@@ -40,6 +39,7 @@ pub struct Entity {
     pub id: String,
     pub prefab: Option<String>,
     pub data: FnvHashMap<String, serde_json::Value>,
+    pub archived: bool,
 }
 
 impl Model {
@@ -65,7 +65,7 @@ impl Model {
         loop {
             // Pop another include
             if let Some(include) = to_include.pop() {
-                trace!("including from path: {include}");
+                println!("including from path: {include}");
 
                 // Handle dirs and wildcard expansion.
                 let path = if include.ends_with("/*") {
@@ -129,12 +129,18 @@ impl Model {
                             behavior.path =
                                 format!("{}/{}", include_parent.to_string_lossy(), behavior.path);
                         }
+                        behavior.lib =
+                            format!("{}/{}", include_parent.to_string_lossy(), behavior.lib);
                     } else {
+                        behavior.lib = format!(
+                            "{}/{}/{}",
+                            include_parent.to_string_lossy(),
+                            behavior.path,
+                            behavior.lib
+                        );
                         behavior.path =
                             format!("{}/{}", include_parent.to_string_lossy(), behavior.path);
                     }
-
-                    behavior.lib = format!("{}/{}", include_parent.to_string_lossy(), behavior.lib);
                 }
 
                 println!("include_model.behaviors: {:?}", include_model.behaviors);
@@ -254,7 +260,7 @@ impl Default for Behavior {
             debug: false,
             tracing: "".to_owned(),
             script: None,
-            triggers: vec![string::new_truncate("step")],
+            triggers: vec!["step".to_owned()],
             targets: FnvHashMap::default(),
         }
     }
@@ -263,7 +269,7 @@ impl Default for Behavior {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Component {
-    pub name: StringId,
+    pub name: String,
     pub vars: FnvHashMap<String, serde_json::Value>,
 }
 

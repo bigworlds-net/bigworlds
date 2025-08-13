@@ -1,4 +1,4 @@
-use crate::{string, CompName, ShortString, StringId};
+use crate::CompName;
 
 use crate::entity::{Entity, Storage};
 use crate::model::{self, Model};
@@ -11,10 +11,14 @@ use crate::machine::{
 };
 
 /// Call a procedure by name.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Call {
     /// Name of the procedure to call.
-    pub proc_name: ShortString,
+    pub proc_name: String,
 }
 
 impl Call {

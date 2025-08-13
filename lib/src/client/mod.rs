@@ -135,6 +135,22 @@ impl AsyncClient for Client {
         }
     }
 
+    async fn invoke(&mut self, event: &str) -> Result<()> {
+        if let Message::ErrorResponse(e) = self
+            .execute(
+                msg::InvokeRequest {
+                    event: event.to_owned(),
+                }
+                .into(),
+            )
+            .await?
+        {
+            Err(Error::ErrorResponse(e))
+        } else {
+            Ok(())
+        }
+    }
+
     async fn query(&mut self, query: Query) -> Result<QueryProduct> {
         let msg = self.execute(Message::QueryRequest(query)).await?;
         match msg {

@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress};
-use crate::{CompName, Int, StringId, Var, VarType};
+use crate::{CompName, Int, Var, VarType};
 
 use crate::entity::{Entity, Storage, StorageIndex};
 use crate::model::Model;
@@ -17,6 +17,10 @@ use crate::machine::{
 pub const COMMAND_NAMES: [&'static str; 1] = ["for"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ForIn {
     pub start: usize,
     pub end: usize,

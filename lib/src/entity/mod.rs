@@ -21,16 +21,20 @@ pub use storage::StorageIndex;
 /// Entities are defined in a way that makes them easy to be sent between
 /// workers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Entity {
     /// All data associated with the entity.
     pub storage: Storage,
 
     /// List of attached components.
     ///
-    /// This list is updated automatically based on "schema-full" interactions
-    /// with the simulation.
+    /// This list is updated automatically given use of proper attachment
+    /// methods.
     ///
-    /// NOTE: It's possible to insert data into an entity bypassing this list,
+    /// NOTE: it's possible to insert data into an entity bypassing this list,
     /// this however has consequences for visibility in cases like querying
     /// and attaching behaviors based on given entity's component makeup.
     pub components: Vec<CompName>,
@@ -40,11 +44,15 @@ pub struct Entity {
 
 /// Meta information about the entity and it's situation within the system.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct EntityMeta {
     /// Time at which the entity was moved to the current worker.
-    pub last_moved: Option<DateTime<Utc>>,
+    pub last_moved: Option<u32>,
     /// Tracks last access time.
-    pub last_access: Option<DateTime<Utc>>,
+    pub last_access: Option<u32>,
 }
 
 impl Entity {

@@ -1,12 +1,11 @@
 use crate::machine::cmd::Command;
 use crate::machine::error::{Error, ErrorKind, Result};
 use crate::machine::{CommandPrototype, LocationInfo};
-use crate::{string, Address, CompName, StringId};
+use crate::{Address, CompName};
 
 pub const COMMAND_NAMES: [&'static str; 1] = ["machine"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "small_stringid", derive(Copy))]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)

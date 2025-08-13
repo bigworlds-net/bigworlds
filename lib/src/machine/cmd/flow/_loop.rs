@@ -14,6 +14,10 @@ use crate::machine::{LoopCallInfo, Result};
 pub const LOOP_COMMAND_NAMES: [&'static str; 2] = ["loop", "while"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Condition {
     None,
     BoolValue(bool),
@@ -29,6 +33,10 @@ impl Condition {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Loop {
     pub break_condition: Condition,
     pub start: usize,
@@ -113,6 +121,10 @@ impl Loop {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct Break;
 
 impl Break {

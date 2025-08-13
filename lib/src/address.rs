@@ -7,15 +7,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::StorageIndex;
 use crate::error::{Error, Result};
-use crate::{string, CompName, EntityName, VarName, VarType};
+use crate::{CompName, EntityName, VarName, VarType};
 
 pub const SEPARATOR_SYMBOL: &'static str = ".";
 
 /// Entity-scope address that can also handle component-scope locality.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(
-    any(feature = "small_stringid", feature = "tiny_stringid"),
-    derive(Copy)
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct ShortLocalAddress {
     pub comp: Option<CompName>,
@@ -34,13 +34,13 @@ impl FromStr for ShortLocalAddress {
             Ok(ShortLocalAddress {
                 comp: None,
                 var_type: VarType::from_str(split[0])?,
-                var_name: string::new_truncate(split[1]),
+                var_name: split[1].to_owned(),
             })
         } else if split.len() == 3 {
             Ok(ShortLocalAddress {
-                comp: Some(string::new_truncate(split[0])),
+                comp: Some(split[0].to_owned()),
                 var_type: VarType::from_str(split[1])?,
-                var_name: string::new_truncate(split[2]),
+                var_name: split[2].to_owned(),
             })
         } else {
             Err(Error::InvalidLocalAddress(s.to_string()))
@@ -49,6 +49,21 @@ impl FromStr for ShortLocalAddress {
 }
 
 impl ShortLocalAddress {
+    pub fn from_str_with_type(s: &str, var_type: VarType) -> Result<Self> {
+        let split = s
+            .split(crate::address::SEPARATOR_SYMBOL)
+            .collect::<Vec<&str>>();
+        if split.len() == 1 {
+            Ok(ShortLocalAddress {
+                comp: None,
+                var_type,
+                var_name: s.to_owned(),
+            })
+        } else {
+            Err(Error::InvalidData("".to_owned()))
+        }
+    }
+
     pub fn into_local_address(self, component: Option<CompName>) -> Result<LocalAddress> {
         match self.comp {
             Some(c) => match component {
@@ -124,6 +139,11 @@ impl ShortLocalAddress {
 // `var_name` separately.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "small_stringid", derive(Copy))]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "archive", rkyv(derive(Hash, PartialEq, Eq)))]
 pub struct LocalAddress {
     pub comp: CompName,
     pub var_type: VarType,
@@ -139,9 +159,9 @@ impl FromStr for LocalAddress {
             .collect::<Vec<&str>>();
         if split.len() == 3 {
             Ok(LocalAddress {
-                comp: string::new_truncate(split[0]),
+                comp: split[0].to_owned(),
                 var_type: VarType::from_str(split[1])?,
-                var_name: string::new_truncate(split[2]),
+                var_name: split[2].to_owned(),
             })
         } else {
             Err(Error::InvalidLocalAddress(s.to_string()))
@@ -171,17 +191,12 @@ impl LocalAddress {
 }
 
 /// Globally unique reference to simulation variable.
-// TODO: consider storing `StorageIndex` directly instead of `comp` and
-// `var_name` separately.
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
-#[cfg_attr(
-    any(feature = "small_stringid", feature = "tiny_stringid"),
-    derive(Copy)
-)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
+#[cfg_attr(feature = "archive", rkyv(derive(Hash, PartialEq, Eq)))]
 pub struct Address {
     pub entity: EntityName,
     pub comp: CompName,
@@ -215,10 +230,10 @@ impl FromStr for Address {
             return Err(Error::FailedCreatingAddress(s.to_string()));
         }
         Ok(Address {
-            entity: string::new_truncate(split[0]),
-            comp: string::new_truncate(split[1]),
+            entity: split[0].to_owned(),
+            comp: split[1].to_owned(),
             var_type: VarType::from_str(split[2])?,
-            var_name: string::new_truncate(split[3]),
+            var_name: split[3].to_owned(),
         })
     }
 }
@@ -268,19 +283,19 @@ impl FromStr for PartialAddress {
             Ok(PartialAddress {
                 entity: None,
                 component: None,
-                var_name: string::new_truncate(split[0]),
+                var_name: split[0].to_owned(),
             })
         } else if split.len() == 2 {
             Ok(Self {
                 entity: None,
-                component: Some(string::new_truncate(split[0])),
-                var_name: string::new_truncate(split[1]),
+                component: Some(split[0].to_owned()),
+                var_name: split[1].to_owned(),
             })
         } else if split.len() == 3 {
             Ok(Self {
-                entity: Some(string::new_truncate(split[0])),
-                component: Some(string::new_truncate(split[1])),
-                var_name: string::new_truncate(split[2]),
+                entity: Some(split[0].to_owned()),
+                component: Some(split[1].to_owned()),
+                var_name: split[2].to_owned(),
             })
         } else {
             Err(Error::FailedCreatingAddress(s.to_string()))
