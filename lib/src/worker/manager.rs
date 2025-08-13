@@ -343,11 +343,15 @@ pub fn spawn(mut worker: State, cancel: CancellationToken) -> Result<ManagerExec
                     snd.send(resp);
                 },
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                    let now = Instant::now();
-                    if let Some(ref mut part) = worker.part {
-                        match part.archive_entities() {
-                            Ok(count) => println!("archived {} entities, took: {}ms", count, now.elapsed().as_millis()),
-                            Err(e) => warn!("entity archival chore failed: {}", e),
+                    if worker.config.partition.auto_archive_entities {
+                        let now = Instant::now();
+                        if let Some(ref mut part) = worker.part {
+                            match part.archive_entities() {
+                                Ok(count) => if count > 0 {
+                                    debug!("archived {} entities, took: {}ms", count, now.elapsed().as_millis());
+                                }
+                                Err(e) => warn!("entity archival chore failed: {}", e),
+                            }
                         }
                     }
 
