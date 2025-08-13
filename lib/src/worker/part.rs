@@ -104,7 +104,7 @@ impl Partition {
             archive: fjall::Config::new("workerpart")
                 .max_write_buffer_size(1024 * 1024 * 1024)
                 .max_journaling_size(2 * 1024 * 1024 * 1024)
-                .fsync_ms(Some(1000))
+                // .fsync_ms(Some(1000))
                 .open()?
                 .open_partition(
                     "entities",
@@ -245,10 +245,9 @@ impl Partition {
 
         // Check if the entity is present in memory or if it's currently in
         // cold storage.
-        // if self.entities.remove(&name).is_some() {
-        // Ok(())
-        // } else if self.archive.remove(&name).is_ok() {
-        if self.archive.remove(&name).is_ok() {
+        if self.entities.remove(&name).is_some() {
+            Ok(())
+        } else if self.archive.remove(&name).is_ok() {
             Ok(())
         } else {
             Err(Error::FailedGettingEntityByName(name))

@@ -380,16 +380,25 @@ pub async fn process_query(
                     }
                 }
             }
-            // Map::SelectAddrs(addrs) => {
-            //     if let Some(entity) = entities.get(entity_id) {
-            //         for addr in addrs {
-            //             if let Ok(var) = entity.storage.get_var(&addr.storage_index()) {
-            //                 mapped_data.insert((entity_id, &addr.comp, &addr.var_name), var);
-            //             }
-            //         }
-            //     }
-            // }
-            _ => unimplemented!(),
+            Map::SelectAddrs(addrs) => {
+                for entity_id in &selected_entities {
+                    if let Ok(entity) = part.get_entity(entity_id) {
+                        for addr in addrs {
+                            if let Ok(var) = entity.storage.get_var(&addr.storage_index()) {
+                                mapped_data.insert(
+                                    (
+                                        entity_id.to_owned(),
+                                        addr.comp.to_owned(),
+                                        addr.var_name.to_owned(),
+                                    ),
+                                    var.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!("mapping: {:?}", mapping),
         }
     }
 

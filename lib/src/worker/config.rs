@@ -37,8 +37,8 @@ pub struct Config {
     pub behaviors_follow_model_changes: bool,
 
     /// Flag for disallowing subsequent entity migrations after a successfull
-    /// migration, expressed in milliseconds.
-    pub entity_migration_cooldown_ms: Option<u64>,
+    /// migration.
+    pub entity_migration_cooldown_secs: Option<u32>,
 
     /// Maximum allowed memory use.
     pub max_ram_mb: usize,
@@ -62,7 +62,7 @@ impl Default for Config {
             topo_strategy: Default::default(),
             orphan_fork: true,
             behaviors_follow_model_changes: true,
-            entity_migration_cooldown_ms: Some(10),
+            entity_migration_cooldown_secs: Some(3),
             max_ram_mb: 0,
             max_disk_mb: 0,
             max_transfer_mb: 0,

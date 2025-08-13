@@ -22,7 +22,7 @@ default = [
   "http_server",
   "grpc_server",
 
-  # "archive"
+  "archive"
 ]
 
 quic_transport = []

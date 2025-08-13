@@ -1396,15 +1396,11 @@ async fn handle_request(
                 if let manager::Response::Entity(entity) = resp {
                     // Prevent a single entity getting moved multiple times
                     // during a single migration process.
-                    if let Some(cooldown_ms) = config.entity_migration_cooldown_ms {
+                    if let Some(cooldown_secs) = config.entity_migration_cooldown_secs {
+                        println!("last moved: {:?}", entity.meta.last_moved);
                         if let Some(last_moved) = entity.meta.last_moved {
-                            if Utc::now()
-                                .signed_duration_since(
-                                    chrono::DateTime::from_timestamp(last_moved as i64, 0).unwrap(),
-                                )
-                                .num_milliseconds()
-                                < cooldown_ms as i64
-                            {
+                            if Utc::now().timestamp() as u32 - last_moved <= cooldown_secs as u32 {
+                                println!("cooldown not ready");
                                 continue;
                             }
                         }
