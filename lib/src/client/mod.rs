@@ -15,7 +15,9 @@ use crate::executor::ExecutorMulti;
 use crate::net::{CompositeAddress, Encoding, Transport};
 use crate::rpc::msg::{self, Message, PullRequestData};
 use crate::time::Duration;
-use crate::{query, Address, EntityName, Error, Model, PrefabName, RemoteExec, Result, Var};
+use crate::{
+    query, Address, EntityName, Error, Model, PrefabName, RemoteExec, Result, Snapshot, Var,
+};
 use crate::{Executor, Query, QueryProduct};
 
 /// Basic client based on the default remote executor interface based on the
@@ -180,6 +182,10 @@ impl AsyncClient for Client {
             .execute(Message::UnsubscribeRequest(subscription_id))
             .await?
             .ok()
+    }
+
+    async fn snapshot(&mut self) -> Result<Snapshot> {
+        self.execute(Message::SnapshotRequest).await?.try_into()
     }
 }
 

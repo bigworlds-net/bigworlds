@@ -20,7 +20,7 @@ pub use storage::StorageIndex;
 ///
 /// Entities are defined in a way that makes them easy to be sent between
 /// workers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -43,7 +43,7 @@ pub struct Entity {
 }
 
 /// Meta information about the entity and it's situation within the system.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)

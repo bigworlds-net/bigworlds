@@ -54,7 +54,7 @@ pub struct Behavior {
 }
 
 /// Basic byte array artifact storage.
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Hash)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -208,10 +208,19 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                 if i.path.contains(".lua") {
                     #[cfg(feature = "behavior_lua")]
                     {
-                        let script = crate::util::read_file(&i.path)?;
-                        BehaviorInner::Lua {
-                            script,
-                            synced: i.synced,
+                        if let Some(script) = &i.script {
+                            BehaviorInner::Lua {
+                                script: script.to_owned(),
+                                synced: i.synced,
+                            }
+                        } else {
+                            println!("lua script path: {}", i.path);
+                            let script = crate::util::read_file(&i.path)?;
+                            println!("read lua script OK");
+                            BehaviorInner::Lua {
+                                script,
+                                synced: i.synced,
+                            }
                         }
                     }
                     #[cfg(not(feature = "behavior_lua"))]

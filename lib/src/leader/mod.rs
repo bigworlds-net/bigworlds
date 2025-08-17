@@ -24,7 +24,7 @@ use crate::leader::manager::ManagerExec;
 use crate::net::{ConnectionOrAddress, Encoding};
 use crate::rpc::leader::{Request, RequestLocal, Response};
 use crate::rpc::{Caller, Participant};
-use crate::util::{decode, encode};
+use crate::util::{self, decode, encode};
 use crate::worker::{WorkerExec, WorkerId, WorkerRemoteExec};
 use crate::{model, net, query, rpc, Model, QueryProduct};
 
@@ -72,7 +72,7 @@ pub struct State {
     pub model: Option<Model>,
 
     /// Current simulation clock.
-    pub clock: usize,
+    pub clock: u64,
 
     pub status: Status,
 }
@@ -99,6 +99,13 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     net::spawn_listeners(&config.listeners, net_exec.clone(), cancel.clone())?;
 
     debug!("spawning leader task, listeners: {:?}", config.listeners);
+
+    // Clean up old cluster files in the current working directory.
+    {
+        let path = util::get_local_data_dir()?.join("cluster");
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::create_dir_all(&path);
+    }
 
     let autostep = config.autostep.clone();
     let mut state = State {

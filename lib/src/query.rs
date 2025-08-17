@@ -371,8 +371,10 @@ pub enum Scope {
     /// Broadcast the query across the whole cluster
     #[default]
     Global,
+    /// Restrict the query to workers running on the same node.
+    LocalNode,
     /// Restrict the query to the worker that originally received the query
-    Local,
+    LocalWorker,
     /// Number of times the query can be "broadcasted" to all visible workers
     Broadcasts(u8),
     /// Number of times the query will be passed on to another worker.

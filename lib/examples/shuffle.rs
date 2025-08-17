@@ -3,11 +3,14 @@
 //! For the sake of the example we define a situation where entities are
 //! randomly reassigned to a worker on each simulation step.
 
+use tokio_util::sync::CancellationToken;
+
 use bigworlds::{
     query::{Description, Filter, Map, Scope},
-    rpc, sim, worker, Executor, Model, Query, Signal,
+    rpc,
+    sim::{self, SimConfig},
+    worker, Executor, Model, Query, Signal,
 };
-use tokio_util::sync::CancellationToken;
 
 mod common;
 
@@ -16,11 +19,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
+    let cancel = CancellationToken::new();
+
     // Spawn a local sim instance. It will operate a single worker by itself.
-    let mut sim = sim::spawn().await?;
+    let mut config = SimConfig::default();
+    config.worker_count = 1;
+    let mut sim = sim::spawn_with(config, cancel.clone()).await?;
 
     // Manually spawn 2 additional workers and connect them to the leader.
-    let cancel = CancellationToken::new();
     let foo_worker = worker::spawn(worker::Config::default(), cancel.clone())?;
     foo_worker.connect_to_local_leader(&sim.leader).await?;
     let bar_worker = worker::spawn(worker::Config::default(), cancel.clone())?;
@@ -87,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .to_named_map()?;
 
-    println!("sim_worker: {:?}", sim.worker.entities().await?);
+    println!("sim_worker: {:?}", sim.entities().await?);
     println!("foo_worker: {:?}", foo_worker.entities().await?);
     println!("bar_worker: {:?}", bar_worker.entities().await?);
 
@@ -104,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
         1.
     );
 
-    println!("sim_worker: {:?}", sim.worker.entities().await?);
+    println!("sim_worker: {:?}", sim.entities().await?);
     println!("foo_worker: {:?}", foo_worker.entities().await?);
     println!("bar_worker: {:?}", bar_worker.entities().await?);
 

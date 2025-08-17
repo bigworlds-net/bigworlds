@@ -129,7 +129,6 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
                     .collect::<Vec<_>>(),
                 ..Default::default()
             },
-            worker.clone(),
             cancel.clone(),
         )?;
         worker.connect_to_local_server(&server).await?;

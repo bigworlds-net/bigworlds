@@ -20,8 +20,8 @@ use crate::server::ServerId;
 use crate::worker::part::Partition;
 use crate::worker::{Leader, LeaderSituation, Server, ServerExec, State};
 use crate::{
-    net, query, rpc, Address, EntityName, Error, Executor, Model, PrefabName, Query, QueryProduct,
-    Result, Var,
+    net, query, rpc, util, Address, EntityName, Error, Executor, Model, PrefabName, Query,
+    QueryProduct, Result, Var,
 };
 
 use super::{Config, OtherWorker, Subscription, WorkerId};
@@ -29,6 +29,10 @@ use super::{Config, OtherWorker, Subscription, WorkerId};
 pub type ManagerExec = LocalExec<Request, Result<Response>>;
 
 impl ManagerExec {
+    pub async fn broadcast(&self) -> Result<()> {
+        Ok(())
+    }
+
     pub async fn get_id(&self) -> Result<WorkerId> {
         let resp = self.execute(Request::GetId).await??;
         if let Response::GetId(m) = resp {
@@ -536,8 +540,13 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 // perhaps the channel should live higher up on the worker
                 // state instead.
                 let old_part = worker.part.replace(
-                    Partition::from_model(model, behavior_exec, worker.config.partition.clone())
-                        .await?,
+                    Partition::from_model(
+                        model,
+                        behavior_exec,
+                        worker.config.partition.clone(),
+                        worker.id,
+                    )
+                    .await?,
                 );
                 if let Some(old_part) = old_part {
                     worker.part.as_mut().unwrap().behavior_broadcast = old_part.behavior_broadcast;
@@ -560,7 +569,6 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             // Ok(Response::MachineHandle(handle))
         }
         Request::Shutdown => {
-            // println!("worker: manager: received shutdown request");
             if let Some(part) = &worker.part {
                 log::trace!("manager sending shutdown to behavior tasks");
                 part.behavior_broadcast

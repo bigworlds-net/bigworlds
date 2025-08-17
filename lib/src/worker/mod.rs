@@ -43,7 +43,7 @@ use pov::{Leader, LeaderSituation, OtherWorker, Server};
 /// Network-unique identifier for a single worker.
 pub type WorkerId = Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Subscription {
     pub id: Uuid,
     pub triggers: Vec<query::Trigger>,
@@ -154,14 +154,15 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     let id = Uuid::new_v4();
     let mut state = State {
         id,
+        // TODO: validate that the listener addresses we're passing here were
+        // actually valid and actual listeners were started on those.
         listeners: config.listeners.clone(),
         part: Some(Partition::new(
             local_behavior_executor.clone(),
             config.partition.clone(),
+            id,
         )?),
         config,
-        // TODO: validate that the listener addresses we're passing here were
-        // actually valid and actual listeners were started on those
         leader: LeaderSituation::Never,
         other_workers: FnvHashMap::default(),
         servers: FnvHashMap::default(),
@@ -1055,108 +1056,7 @@ async fn handle_request(
             let mut ctx = ctx.ok_or(Error::ContextRequired(
                 "Worker cannot process query without signal context".to_string(),
             ))?;
-            let my_id = manager.get_id().await?;
-            let mut product = QueryProduct::Empty;
-            match query.scope {
-                query::Scope::Global => {
-                    // println!("worker[{my_id}]: processing global query");
-
-                    // Broadcast query accross the cluster
-
-                    let mut workers = manager.get_other_workers().await?;
-                    // println!(
-                    //     "local worker: visible workers: {:?}",
-                    //     workers.iter().map(|(id, _)| id).collect::<Vec<&Uuid>>()
-                    // );
-
-                    // It can be that no remote workers are visible to this
-                    // worker. Cluster creation is allowed with only the leader
-                    // being accessible over the network.
-                    //
-                    // In such case the worker must use the leader as proxy
-                    // towards the rest of the cluster.
-                    //
-                    // TODO: put some of these peering rules into worker config.
-                    if workers.is_empty() && !ctx.went_through_leader() {
-                        // Add current worker to the list so that the request
-                        // doesn't circle back through the leader to this
-                        // worker
-                        ctx.hops.push(rpc::NetworkHop {
-                            observer: Participant::Worker(manager.get_id().await?).into(),
-                            delta_time: Duration::from_millis(10),
-                        });
-                        // went_through_workers.push(manager.get_meta().await?);
-
-                        let leader = manager.get_leader().await?;
-                        if let LeaderSituation::Connected(leader) = leader {
-                            let response = leader
-                                .execute(Signal::new(
-                                    rpc::leader::Request::WorkerProxy(Request::ProcessQuery(
-                                        query.clone(),
-                                    )),
-                                    Some(ctx.clone()),
-                                ))
-                                .await?;
-                            if let Signal {
-                                payload:
-                                    rpc::leader::Response::WorkerProxy(Response::Query(_product)),
-                                ..
-                            } = response
-                            {
-                                product.merge(_product)?;
-                            } else if let Signal {
-                                payload: rpc::leader::Response::WorkerProxy(Response::Empty),
-                                ..
-                            } = response
-                            {
-                                // no other workers connected to leader
-                            } else {
-                                // unexpected response
-                                println!("unexpected response: {:?}", response);
-                            }
-                        } else {
-                            // leader not connected
-                        }
-                    }
-
-                    let local = {
-                        let query = query.clone();
-                        tokio::spawn(async move { manager.process_query(query.clone()).await })
-                    };
-
-                    if !workers.is_empty() {
-                        let mut set = JoinSet::new();
-                        println!("worker: query: num of remote workers: {}", workers.len());
-                        for (id, worker) in workers {
-                            let query = query.clone();
-                            set.spawn(async move {
-                                worker
-                                    .execute(rpc::worker::Request::ProcessQuery(query))
-                                    .await
-                            });
-                        }
-                        while let Some(res) = set.join_next().await {
-                            let response =
-                                res.map_err(|e| Error::NetworkError(format!("{e}")))??;
-                            match response {
-                                Response::Query(_product) => product.merge(_product)?,
-                                _ => return Err(Error::UnexpectedResponse(response.to_string())),
-                            }
-                        }
-                    }
-
-                    let local = local.await.map_err(|e| Error::Other(format!("{e}")))??;
-                    // println!(
-                    //     "worker[{my_id}]: global query: product: {product:?}, local: {local:?}"
-                    // );
-                    product.merge(local)?;
-                }
-                query::Scope::Local => {
-                    product = manager.process_query(query).await?;
-                }
-                _ => unimplemented!(),
-            }
-
+            let product = process_query(query, manager, &mut ctx).await?;
             trace!("worker: query: product: {:?}", product);
             Ok(Signal::new(Response::Query(product), Some(ctx)))
         }
@@ -1208,7 +1108,17 @@ async fn handle_request(
                 ctx,
             ))
         }
-        Request::Trigger(events) => {
+        Request::Invoke { events, global } => {
+            // Global invocation requires broadcasting the request accross the
+            // cluster to all the workers.
+            if global {
+                // ctx.unwrap().worker_hop_count()
+                // manager.broadcast()
+            }
+            // Local invocation can happen right away.
+            else if !global {
+            }
+
             // Broadcast events to unsynced behaviors
             let tx = manager.get_unsynced_behavior_tx().await?;
             for event in &events {
@@ -1239,7 +1149,6 @@ async fn handle_request(
                 .chain(machine_handles)
                 .collect::<Vec<_>>();
 
-            // println!("got handles: {}", handles.len());
             for handle in behavior_handles {
                 for event in &events {
                     if handle.triggers.contains(&event) {
@@ -1260,14 +1169,27 @@ async fn handle_request(
             for event in events {
                 let subs = manager.get_subscriptions().await?;
                 for sub in subs {
+                    println!("event: {}, sub: {:?}", event, sub);
                     for trigger in &sub.triggers {
                         if let Trigger::Event(event) = trigger {
                             continue;
                         }
                     }
-                    let product = manager.process_query(sub.query).await?;
+
+                    let mut ctx_ = ctx.clone().ok_or(Error::ContextRequired(format!("")))?;
+                    let manager_ = manager.clone();
+                    let query = sub.query.clone();
+
+                    let (product, ctx) = tokio::spawn(async move {
+                        let mut ctx_ = ctx_;
+                        let product = process_query(query, manager_, &mut ctx_).await?;
+                        Result::Ok((product, ctx_))
+                    })
+                    .await
+                    .unwrap()?;
+
                     sub.sender
-                        .send(Ok(Signal::from(Response::Query(product))))
+                        .send(Ok(Signal::new(Response::Query(product), Some(ctx))))
                         .await;
                 }
             }
@@ -1452,6 +1374,10 @@ async fn handle_request(
         Request::Authorize { token } => {
             todo!()
         }
+        Request::Snapshot => {
+            //
+            Ok(Signal::new(Response::Empty, ctx))
+        }
         #[cfg(feature = "machine")]
         Request::MachineLogic { name } => {
             let leader = manager.get_leader().await?;
@@ -1488,4 +1414,114 @@ async fn handle_request(
         Request::IntroduceLeader { .. } => unreachable!(),
         Request::Election { .. } => unreachable!(),
     }
+}
+
+/// Broadcasts a request accross all cluster participants.
+async fn broadcast(query: Query, manager: ManagerExec, mut ctx: &mut rpc::Context) -> Result<()> {
+    Ok(())
+}
+
+async fn process_query(
+    query: Query,
+    manager: ManagerExec,
+    mut ctx: &mut rpc::Context,
+) -> Result<QueryProduct> {
+    let my_id = manager.get_id().await?;
+    let mut product = QueryProduct::Empty;
+    match query.scope {
+        query::Scope::Global => {
+            // println!("worker[{my_id}]: processing global query");
+
+            // Broadcast query accross the cluster
+
+            let mut workers = manager.get_other_workers().await?;
+            // println!(
+            //     "local worker: visible workers: {:?}",
+            //     workers.iter().map(|(id, _)| id).collect::<Vec<&Uuid>>()
+            // );
+
+            // It can be that no remote workers are visible to this
+            // worker. Cluster creation is allowed with only the leader
+            // being accessible over the network.
+            //
+            // In such case the worker must use the leader as proxy
+            // towards the rest of the cluster.
+            //
+            // TODO: put some of these peering rules into worker config.
+            if workers.is_empty() && !ctx.went_through_leader() {
+                // Add the current worker to the list so that the
+                // request doesn't circle back through the leader to
+                // this worker.
+                ctx.hops.push(rpc::NetworkHop {
+                    observer: Participant::Worker(manager.get_id().await?).into(),
+                    delta_time_ms: (ctx.initiated_at - Utc::now().timestamp_millis() as u64) as u16,
+                });
+
+                let leader = manager.get_leader().await?;
+                if let LeaderSituation::Connected(leader) = leader {
+                    let response = leader
+                        .execute(Signal::new(
+                            rpc::leader::Request::WorkerProxy(Request::ProcessQuery(query.clone())),
+                            Some(ctx.clone()),
+                        ))
+                        .await?;
+                    if let Signal {
+                        payload: rpc::leader::Response::WorkerProxy(Response::Query(_product)),
+                        ..
+                    } = response
+                    {
+                        product.merge(_product)?;
+                    } else if let Signal {
+                        payload: rpc::leader::Response::WorkerProxy(Response::Empty),
+                        ..
+                    } = response
+                    {
+                        // no other workers connected to leader
+                    } else {
+                        // unexpected response
+                        println!("unexpected response: {:?}", response);
+                    }
+                } else {
+                    // leader not connected
+                }
+            }
+
+            let local = {
+                let query = query.clone();
+                tokio::spawn(async move { manager.process_query(query.clone()).await })
+            };
+
+            if !workers.is_empty() {
+                let mut set = JoinSet::new();
+                println!("worker: query: num of remote workers: {}", workers.len());
+                for (id, worker) in workers {
+                    let query = query.clone();
+                    set.spawn(async move {
+                        worker
+                            .execute(rpc::worker::Request::ProcessQuery(query))
+                            .await
+                    });
+                }
+                while let Some(res) = set.join_next().await {
+                    let response = res.map_err(|e| Error::NetworkError(format!("{e}")))??;
+                    match response {
+                        Response::Query(_product) => product.merge(_product)?,
+                        _ => return Err(Error::UnexpectedResponse(response.to_string())),
+                    }
+                }
+            }
+
+            let local = local.await.map_err(|e| Error::Other(format!("{e}")))??;
+            // println!(
+            //     "worker[{my_id}]: global query: product: {product:?}, local: {local:?}"
+            // );
+            product.merge(local)?;
+        }
+        query::Scope::LocalWorker => {
+            product = manager.process_query(query).await?;
+        }
+        _ => unimplemented!(),
+    }
+
+    Ok(product)
 }

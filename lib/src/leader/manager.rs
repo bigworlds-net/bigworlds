@@ -44,7 +44,7 @@ impl ManagerExec {
         }
     }
 
-    pub async fn get_clock(&self) -> Result<usize> {
+    pub async fn get_clock(&self) -> Result<u64> {
         let resp = self.execute(Request::GetClock).await??;
         if let Response::Clock(clock) = resp {
             Ok(clock)
@@ -314,7 +314,7 @@ pub enum Response {
     GetConfig(Config),
     GetMeta(LeaderId),
     Status(Status),
-    Clock(usize),
+    Clock(u64),
     Workers(FnvHashMap<WorkerId, Worker>),
     // WorkerExecs(Vec<WorkerExec>),
     WorkerCount(usize),

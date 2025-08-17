@@ -7,7 +7,7 @@ use crate::client::Config;
 use crate::net::CompositeAddress;
 use crate::query::{self, Query, QueryProduct};
 use crate::rpc::msg::{Message, StatusResponse};
-use crate::{executor, EntityName, Model, PrefabName, Result};
+use crate::{executor, EntityName, Model, PrefabName, Result, Snapshot};
 
 #[async_trait]
 pub trait AsyncClient {
@@ -33,4 +33,6 @@ pub trait AsyncClient {
         query: Query,
     ) -> Result<executor::Receiver<Message>>;
     async fn unsubscribe(&mut self, subscription_id: Uuid) -> Result<()>;
+
+    async fn snapshot(&mut self) -> Result<Snapshot>;
 }

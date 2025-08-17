@@ -15,6 +15,7 @@ use anyhow::Result;
 use linefeed::inputrc::parse_text;
 use linefeed::Signal;
 use linefeed::{Interface, ReadResult};
+use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -329,7 +330,11 @@ pub async fn start(
                                     continue;
                                 }
 
-                                unimplemented!();
+                                let snapshot = client.snapshot().await?;
+                                tokio::fs::File::create_new(args)
+                                    .await?
+                                    .write_all(&snapshot.to_bytes(true, false)?)
+                                    .await?;
                             }
                             // Write a compressed snapshot to disk.
                             "snapc" => {
@@ -528,7 +533,7 @@ show_list               {show_list}
 
 pub async fn create_prompt(mut driver: &mut impl AsyncClient, cfg: &Config) -> Result<String> {
     let status = driver.status().await?;
-    let clock = status.current_tick;
+    let clock = status.clock;
     Ok(format!("[{}] ", clock,))
 }
 

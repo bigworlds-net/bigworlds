@@ -227,7 +227,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
     leader.connect_to_local_worker(&worker, true).await?;
 
     // Spawn the server.
-    let mut server = server::spawn(config, worker.clone(), cancel.clone())?;
+    let mut server = server::spawn(config, cancel.clone())?;
     server.connect_to_worker(&worker, true).await?;
 
     Ok(())

@@ -141,7 +141,7 @@ fn handle_request(
             if let Some(config) = server_config {
                 info!("node: spawning worker-backed server: {:?}", config);
                 server_listeners.extend(config.listeners.clone());
-                let server_handle = server::spawn(config, worker_handle.clone(), cancel.clone())?;
+                let server_handle = server::spawn(config, cancel.clone())?;
                 node.servers.push(server_handle);
             }
 

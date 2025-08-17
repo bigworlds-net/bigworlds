@@ -77,6 +77,9 @@ pub enum Error {
     #[error("worker not initialized: {0}")]
     WorkerNotInitialized(String),
 
+    #[error("server not connected: {0}")]
+    ServerNotConnected(String),
+
     #[error("unknown error")]
     Unknown,
 

@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use fnv::FnvHashMap;
 
 use crate::net::{Encoding, Transport};
+use crate::snapshot::Snapshot;
 use crate::{Address, CompName, EntityId, Float, Int, Var, VarName, VarType};
 
 use super::Message;
@@ -60,7 +61,7 @@ pub struct StatusResponse {
     pub connected_clients: Vec<String>,
     pub engine_version: String,
     pub uptime: u64,
-    pub current_tick: usize,
+    pub clock: u64,
 
     // pub model: Model,
 
@@ -576,6 +577,27 @@ pub struct InvokeRequest {
 impl Into<Message> for InvokeRequest {
     fn into(self) -> Message {
         Message::InvokeRequest(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+pub struct SnapshotRequest {}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "archive",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+pub struct SnapshotResponse {
+    pub snapshot: Snapshot,
+}
+impl Into<Message> for SnapshotResponse {
+    fn into(self) -> Message {
+        Message::SnapshotResponse(self)
     }
 }
 

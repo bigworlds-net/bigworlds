@@ -1,4 +1,8 @@
-use std::{fs::File, io::Write};
+use std::{
+    fs::File,
+    hash::Hash,
+    io::{Read, Write},
+};
 
 use libloading::Library;
 
@@ -31,21 +35,48 @@ pub fn spawn(
         "opening at lib_path: {}, truncating (rewriting) existing artifact if it exists",
         lib_path
     );
-    File::create(&lib_path)
-        .unwrap()
-        .write_all(&artifact.bytes)
-        .unwrap();
+
+    // TODO! rewriting existing artifacts creates issues when having multiple
+    // workers.
+
+    println!("wrote artifact file");
     // TODO: figure out a clever way to perhaps not replace it
     // everytime, or at least provide some config variable for
     // controlling this behavior.
-    // if !std::fs::exists(&lib_path)? {
-    // } else {
-    // }
+    if !std::fs::exists(&lib_path)? {
+        File::create(&lib_path)
+            .unwrap()
+            .write_all(&artifact.bytes)
+            .unwrap();
+    } else {
+        // Check the artifact hash and decide whether overwrite.
 
-    // Load the library
+        let mut file = File::open(&lib_path)?;
+        let mut buf = vec![];
+        file.read_to_end(&mut buf)?;
+        let artifact_: Artifact = buf.into();
+
+        let mut s = std::hash::DefaultHasher::new();
+        artifact_.hash(&mut s);
+        let file_hash = std::hash::Hasher::finish(&s);
+
+        let mut s = std::hash::DefaultHasher::new();
+        artifact.hash(&mut s);
+        let hash = std::hash::Hasher::finish(&s);
+
+        if file_hash != hash {
+            File::create(&lib_path)
+                .unwrap()
+                .write_all(&artifact.bytes)
+                .unwrap();
+        }
+    }
+
+    // Load the library.
     let lib = unsafe { libloading::Library::new(&lib_path).unwrap() };
+    println!("loaded library");
 
-    // Run the function as a separate `behavior`
+    // Run the function as a separate `behavior`.
     let handle = unsafe {
         if synced {
             let function: libloading::Symbol<crate::behavior::BehaviorFnSynced> =

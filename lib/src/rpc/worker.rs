@@ -9,7 +9,8 @@ use crate::net::CompositeAddress;
 use crate::server::ServerId;
 use crate::worker::WorkerId;
 use crate::{
-    entity, query, Address, EntityId, EntityName, EventName, Model, PrefabName, Query, Result, Var,
+    entity, query, Address, EntityId, EntityName, EventName, Model, PrefabName, Query, Result,
+    Snapshot, Var,
 };
 
 use super::{leader, server};
@@ -121,7 +122,14 @@ pub enum Request {
     SetVar(Address, Var),
     SetVars(Vec<(Address, Var)>),
 
-    Trigger(Vec<EventName>),
+    Invoke {
+        events: Vec<EventName>,
+        // TODO: consider whether it's needed to have more scoping options for
+        // invoking events, similar to what we have for queries. This would
+        // include the ability to invoke only for workers that have certain
+        // entities with certain components sets available.
+        global: bool,
+    },
 
     SpawnEntity {
         name: EntityName,
@@ -144,6 +152,8 @@ pub enum Request {
     Authorize {
         token: String,
     },
+
+    Snapshot,
 
     #[cfg(feature = "machine")]
     MachineLogic {
@@ -190,7 +200,7 @@ pub enum Response {
     MemorySize(usize),
     Ping(Vec<u8>),
     GetModel(Model),
-    Clock(usize),
+    Clock(u64),
     Step,
     IsBlocking(bool),
 
@@ -214,6 +224,8 @@ pub enum Response {
 
     EntityNotFound,
 
+    Snapshot(Snapshot),
+
     #[cfg(feature = "machine")]
     MachineLogic(crate::machine::Logic),
 }
@@ -232,6 +244,16 @@ impl Response {
 }
 
 use crate::Error;
+
+impl TryInto<Snapshot> for Response {
+    type Error = Error;
+    fn try_into(self) -> std::result::Result<Snapshot, Self::Error> {
+        match self {
+            Response::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(Error::UnexpectedResponse(self.to_string())),
+        }
+    }
+}
 
 impl TryInto<Model> for Response {
     type Error = Error;

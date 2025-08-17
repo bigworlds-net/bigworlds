@@ -69,7 +69,10 @@ impl Machine {
     pub async fn invoke(&self, events: Vec<EventName>) -> Result<()> {
         let response = self
             .worker
-            .execute(Signal::from(rpc::worker::Request::Trigger(events)))
+            .execute(Signal::from(rpc::worker::Request::Invoke {
+                events,
+                global: true,
+            }))
             .await??;
         Ok(())
     }

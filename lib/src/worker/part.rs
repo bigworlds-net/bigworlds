@@ -17,7 +17,8 @@ use crate::executor::{LocalExec, Signal};
 use crate::model::behavior::BehaviorInner;
 use crate::model::{self, EventModel, PrefabModel};
 use crate::{
-    behavior, rpc, EntityId, EntityName, Error, EventName, Executor, Model, PrefabName, Result, Var,
+    behavior, rpc, util, EntityId, EntityName, Error, EventName, Executor, Model, PrefabName,
+    Result, Var,
 };
 
 #[cfg(feature = "machine")]
@@ -39,6 +40,21 @@ pub struct Config {
     /// Whether the newly added entities should be added to the archive.
     /// If false new entities will be put into the memory store.
     pub entity_create_to_archive: bool,
+
+    // See `fjall` documentation for more information on archive storage
+    // settings.
+    pub archive_max_write_buffer_size_bytes: u64,
+    pub archive_max_journaling_size: u64,
+
+    /// Controls whether and how often a snapshot should be performed.
+    ///
+    /// Snapshot contain all entities present on the partition at the
+    /// particular time it's taken. This includes both the in-memory and the
+    /// archived entities. Every snapshot also contains the model, so that one
+    /// can initialize a new simulation run using an existing snapshot file.
+    ///
+    /// See `snapshot.rs` for more information.
+    pub auto_snapshot_secs: Option<u32>,
 }
 
 impl Default for Config {
@@ -48,6 +64,13 @@ impl Default for Config {
             archive_entity_after_secs: 5,
 
             entity_create_to_archive: false,
+
+            // TODO: test these values further. Perhaps there is a way to
+            // adjust them programmatically based on available memory.
+            archive_max_write_buffer_size_bytes: 1024 * 1024 * 1024,
+            archive_max_journaling_size: 512 * 1024 * 1024,
+
+            auto_snapshot_secs: None,
         }
     }
 }
@@ -98,16 +121,21 @@ impl Partition {
             Result<Signal<rpc::worker::Response>>,
         >,
         config: Config,
+        worker_id: WorkerId,
     ) -> Result<Self> {
+        let archive_path = util::get_local_data_dir()?
+            .join("cluster")
+            .join(worker_id.simple().to_string());
+        std::fs::create_dir_all(&archive_path);
+
         Ok(Self {
             entities: FnvHashMap::default(),
-            archive: fjall::Config::new("workerpart")
-                .max_write_buffer_size(1024 * 1024 * 1024)
-                .max_journaling_size(2 * 1024 * 1024 * 1024)
-                // .fsync_ms(Some(1000))
+            archive: fjall::Config::new(archive_path)
+                .max_write_buffer_size(config.archive_max_write_buffer_size_bytes)
+                .max_journaling_size(config.archive_max_journaling_size)
                 .open()?
                 .open_partition(
-                    "entities",
+                    "archive",
                     fjall::PartitionCreateOptions::default().max_memtable_size(128 * 1024 * 1024),
                 )?,
             #[cfg(feature = "machine")]
@@ -129,9 +157,10 @@ impl Partition {
             Result<Signal<rpc::worker::Response>>,
         >,
         config: Config,
+        worker_id: WorkerId,
     ) -> Result<Self> {
         // Create the new partition object.
-        let mut part = Partition::new(behavior_exec.clone(), config)?;
+        let mut part = Partition::new(behavior_exec.clone(), config, worker_id)?;
 
         // Initialize non-entity-bound behaviors.
         behavior::spawn_non_entity_bound(model, &mut part, behavior_exec);

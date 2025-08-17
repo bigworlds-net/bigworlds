@@ -16,6 +16,19 @@ use crate::error::Error;
 use crate::net::Encoding;
 use crate::Result;
 
+pub fn get_central_data_dir() -> Result<PathBuf> {
+    let path = directories::BaseDirs::new()
+        .ok_or(Error::Other("unable to get home dir".to_string()))?
+        .home_dir()
+        .join(".bigworlds");
+    Ok(path)
+}
+
+pub fn get_local_data_dir() -> Result<PathBuf> {
+    let path = std::env::current_dir()?.join(".bigworlds");
+    Ok(path)
+}
+
 /// Walks up the directory tree looking for the model root.
 pub fn find_model_root(path: PathBuf, recursion_levels: usize) -> Result<PathBuf> {
     let mut _recursion_levels = recursion_levels;
@@ -80,7 +93,7 @@ pub fn find_model_root(path: PathBuf, recursion_levels: usize) -> Result<PathBuf
 /// given directory path. It selects a scenario only if there is only
 /// a single scenario present.
 pub fn get_snapshot_paths(path: PathBuf) -> Result<Vec<PathBuf>> {
-    let dir_path = path.join(crate::SNAPSHOTS_DIR_NAME);
+    let dir_path = path.join(crate::snapshot::SNAPSHOTS_DIR_NAME);
     // println!("{:?}", dir_path);
     if dir_path.exists() && dir_path.is_dir() {
         let mut snapshot_paths = Vec::new();
@@ -221,15 +234,13 @@ pub fn find_files_with_extension<FS: vfs::FileSystem>(
 pub fn read_file(path: &str) -> Result<String> {
     // Create a path to the desired file
     let path = Path::new(path);
-    let display = path.display();
-    // info!("Reading file: {}", display);
 
-    // Open the path in read-only mode, returns
-    // `io::Result<File>`
+    // let display = path.display();
+
+    // Open the path in read-only mode.
     let mut file = File::open(&path)?;
 
-    // Read the file contents into a string, returns
-    // `io::Result<usize>`
+    // Read the file contents into a string.
     let mut s = String::new();
     file.read_to_string(&mut s)?;
     Ok(s)

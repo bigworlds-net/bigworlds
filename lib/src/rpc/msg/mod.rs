@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::error::Error;
 use crate::net::Encoding;
 use crate::query::{Query, QueryProduct, Trigger};
-use crate::{EntityId, EntityName, Float, Int, Result, Var};
+use crate::{EntityId, EntityName, Float, Int, Result, Snapshot, Var};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(
@@ -87,6 +87,9 @@ pub enum Message {
     InitializeResponse,
 
     InvokeRequest(InvokeRequest),
+
+    SnapshotRequest,
+    SnapshotResponse(SnapshotResponse),
 }
 
 impl Message {
@@ -106,6 +109,16 @@ impl Message {
             Message::OK => Ok(()),
             Message::ErrorResponse(e) => Err(Error::ErrorResponse(e.to_owned())),
             _ => Err(Error::UnexpectedResponse(format!("{:?}", self))),
+        }
+    }
+}
+
+impl TryFrom<Message> for Snapshot {
+    type Error = Error;
+    fn try_from(msg: Message) -> std::result::Result<Self, Self::Error> {
+        match msg {
+            Message::SnapshotResponse(response) => Ok(response.snapshot),
+            _ => Err(Error::UnexpectedResponse(format!("{:?}", msg))),
         }
     }
 }

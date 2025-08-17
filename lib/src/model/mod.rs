@@ -87,7 +87,6 @@ pub struct Entity {
 pub struct Model {
     pub scenarios: Vec<Scenario>,
     pub events: Vec<EventModel>,
-    // pub scripts: Vec<String>,
     // TODO: store as a map.
     pub prefabs: Vec<PrefabModel>,
     pub components: Vec<Component>,
@@ -96,7 +95,7 @@ pub struct Model {
     pub data_files: Vec<DataFileEntry>,
     // pub data_imgs: Vec<DataImageEntry>,
     pub services: Vec<ServiceModel>,
-    /// Entities to be spawned at startup, always a name and prefab pair
+    /// Entities to be spawned at startup, always a name and prefab pair.
     pub entities: Vec<Entity>,
 }
 

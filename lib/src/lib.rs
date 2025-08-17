@@ -7,9 +7,6 @@ extern crate serde;
 #[macro_use]
 extern crate log;
 
-mod string;
-pub mod time;
-
 pub mod address;
 pub mod entity;
 pub mod model;
@@ -31,10 +28,13 @@ pub mod node;
 pub mod server;
 pub mod worker;
 
+mod string;
+pub mod time;
 pub mod util;
 
 mod error;
 mod executor;
+mod snapshot;
 
 pub use address::Address;
 pub use error::{Error, Result};
@@ -43,10 +43,10 @@ pub use model::Model;
 pub use query::{Query, QueryProduct};
 pub use server::Config as ServerConfig;
 pub use sim::SimHandle;
+pub use snapshot::Snapshot;
 pub use var::{Var, VarType};
 
 const MODEL_MANIFEST_FILE: &str = "model.toml";
-const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 
 /// Floating point numer type used throughout the library.
 #[cfg(feature = "big_nums")]

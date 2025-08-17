@@ -136,6 +136,8 @@ shlex = { version = "1", optional = true }
 arrayvec = { version = "0.7", features = ["serde"] }
 smallvec = { version = "1", features = ["serde"], optional = true }
 sysinfo = { version = "0.26", optional = true }
+num_cpus = "1"
+directories = "6"
 url = { version = "2.5.4", features = ["serde"] }
 
 enum-as-inner = "0.5"

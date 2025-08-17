@@ -88,8 +88,13 @@ pub struct NetworkHop {
     /// Identifier of the participant that obeserved and registered the
     /// network hop.
     pub observer: Caller,
-    /// Time between original issuing of the call and registering of this hop.
-    pub delta_time: Duration,
+    /// Time between original issuing of the call and registering of this hop,
+    /// expressed as milliseconds.
+    ///
+    /// NOTE: with `u16::MAX / 1000` at around 65, max supported delta here is
+    /// slightly over a minut. For hops taking more than a minute we should
+    /// expect inacurate total time counts for signals.
+    pub delta_time_ms: u16,
 }
 
 /// Describes additional information about the call as it passes through the
@@ -115,8 +120,9 @@ pub struct Context {
     /// travel through the cluster.
     pub target: Option<Participant>,
 
-    /// Date and time when the call was originally made.
-    pub initiated_at: DateTime<Utc>,
+    /// Time at which the call was originally made, expressed as unix epoch
+    /// timestamp (millis).
+    pub initiated_at: u64,
     /// Network hops made so far.
     pub hops: Vec<NetworkHop>,
 }
@@ -126,7 +132,7 @@ impl Context {
         Self {
             origin,
             target: None,
-            initiated_at: Utc::now(),
+            initiated_at: Utc::now().timestamp_millis() as u64,
             hops: vec![],
         }
     }

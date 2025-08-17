@@ -92,11 +92,7 @@ pub struct State {
 }
 
 /// Spawns a new server using provided config and a worker handle.
-pub fn spawn(
-    config: Config,
-    mut worker_handle: worker::Handle,
-    mut cancel: CancellationToken,
-) -> Result<Handle> {
+pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     info!("spawning server task, listeners: {:?}", config.listeners);
 
     let cancel = cancel.child_token();
@@ -201,7 +197,6 @@ pub fn spawn(
     // Finally spawn the main handler task.
     tokio::spawn(async move {
         loop {
-            let mut worker_handle_ = worker_handle.clone();
             tokio::select! {
                 Some((sig, s)) = local_ctl_stream.next() => {
                     debug!("handling local ctl request");
@@ -809,9 +804,10 @@ async fn handle_message(
         Message::InvokeRequest(invoke_request) => {
             if let Some(worker) = &server.lock().await.worker {
                 worker
-                    .execute(Signal::from(rpc::worker::Request::Trigger(vec![
-                        invoke_request.event,
-                    ])))
+                    .execute(Signal::from(rpc::worker::Request::Invoke {
+                        events: vec![invoke_request.event],
+                        global: true,
+                    }))
                     .await?
                     .discard_context()
                     .ok()?;
@@ -820,6 +816,23 @@ async fn handle_message(
                 Err(Error::WorkerNotConnected("".to_owned()))
             }
         }
+        Message::SnapshotRequest => {
+            let server_id = server.lock().await.id;
+            if let Some(worker) = &server.lock().await.worker {
+                let snapshot = worker
+                    .execute(
+                        Signal::from(rpc::worker::Request::Snapshot)
+                            .originating_at(Participant::Server(server_id).into()),
+                    )
+                    .await?
+                    .discard_context()
+                    .try_into()?;
+                Ok(Some(msg::SnapshotResponse { snapshot }.into()))
+            } else {
+                Err(Error::WorkerNotConnected("".to_owned()))
+            }
+        }
+        Message::SnapshotResponse(snapshot_response) => todo!(),
     }
 }
 
@@ -1042,7 +1055,7 @@ impl State {
                 engine_version: env!("CARGO_PKG_VERSION").to_string(),
                 // TODO: explicitly say this is *server* uptime
                 uptime: self.started_at.elapsed().as_secs(),
-                current_tick: match self
+                clock: match self
                     .worker
                     .as_ref()
                     .ok_or(Error::WorkerNotConnected("".to_string()))?
@@ -1067,7 +1080,7 @@ impl State {
 
 impl State {
     /// Gets current clock value
-    pub async fn get_clock(&mut self) -> Result<usize> {
+    pub async fn get_clock(&mut self) -> Result<u64> {
         let resp = self
             .worker
             .as_ref()

@@ -14,7 +14,7 @@ use crate::{
     net::CompositeAddress,
     query,
     rpc::msg::{self, Message},
-    EntityName, Error, PrefabName, Result,
+    EntityName, Error, PrefabName, Result, Snapshot,
 };
 
 use super::{AsyncClient, Config};
@@ -165,6 +165,10 @@ impl AsyncClient for WsClient {
         todo!()
     }
     async fn unsubscribe(&mut self, subscription_id: Uuid) -> Result<()> {
+        todo!()
+    }
+
+    async fn snapshot(&mut self) -> Result<Snapshot> {
         todo!()
     }
 }

@@ -33,7 +33,10 @@ impl UserData for WorkerExec {
             };
             let response = this
                 .0
-                .execute(Signal::from(rpc::worker::Request::GetVar(addr)))
+                .execute(
+                    Signal::from(rpc::worker::Request::GetVar(addr))
+                        .originating_at(rpc::Caller::Behavior),
+                )
                 .await
                 .unwrap()
                 // .map_err(|e| e.into())?;
@@ -71,7 +74,10 @@ impl UserData for WorkerExec {
                 let var = Var::from_str(&var, Some(addr.var_type)).unwrap();
                 let response = this
                     .0
-                    .execute(Signal::from(rpc::worker::Request::SetVar(addr, var)))
+                    .execute(
+                        Signal::from(rpc::worker::Request::SetVar(addr, var))
+                            .originating_at(rpc::Caller::Behavior),
+                    )
                     .await
                     .unwrap()
                     // .map_err(|e| e.into())?;
@@ -88,7 +94,13 @@ impl UserData for WorkerExec {
             tokio::spawn(async move {
                 let response = this
                     .0
-                    .execute(Signal::from(rpc::worker::Request::Trigger(vec![event])))
+                    .execute(
+                        Signal::from(rpc::worker::Request::Invoke {
+                            events: vec![event],
+                            global: true,
+                        })
+                        .originating_at(rpc::Caller::Behavior),
+                    )
                     .await
                     .unwrap()
                     // .map_err(|e| e.into())?;
@@ -104,7 +116,10 @@ impl UserData for WorkerExec {
         methods.add_async_method("worker_status", async |lua, this, ()| {
             let response = this
                 .0
-                .execute(Signal::from(rpc::worker::Request::Status))
+                .execute(
+                    Signal::from(rpc::worker::Request::Status)
+                        .originating_at(rpc::Caller::Behavior),
+                )
                 .await
                 .unwrap()
                 // .map_err(|e| e.into())?;

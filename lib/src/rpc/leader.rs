@@ -124,7 +124,7 @@ pub enum Response {
     Ping(Vec<u8>),
     Connect,
     Register { worker_id: WorkerId },
-    Clock(usize),
+    Clock(u64),
     GetWorkers(FnvHashMap<WorkerId, Vec<CompositeAddress>>),
     Model(Model),
 

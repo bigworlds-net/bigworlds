@@ -10,7 +10,7 @@ pub type StorageIndex = (CompName, VarName);
 
 /// Entity's data storage structure.
 // TODO: benchmark performance of the alternative storage layouts
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)

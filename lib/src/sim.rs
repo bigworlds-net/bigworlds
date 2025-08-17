@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use fnv::FnvHashMap;
 use futures::future::BoxFuture;
 use itertools::Itertools;
 use tokio_util::sync::CancellationToken;
@@ -17,6 +18,7 @@ use crate::rpc::msg::{
     self, AdvanceRequest, Message, RegisterClientRequest, RegisterClientResponse,
 };
 use crate::rpc::worker::RequestLocal;
+use crate::snapshot::Snapshot;
 use crate::{behavior, query, Query};
 use crate::{
     leader, rpc, server, worker, Address, EntityId, EntityName, Error, Model, Result, Var,
@@ -26,19 +28,35 @@ use crate::{EventName, PrefabName};
 #[cfg(feature = "machine")]
 use crate::machine::MachineHandle;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SimConfig {
-    pub leader: leader::Config,
+    /// Number of workers to be spawned as part of the local sim instance.
+    /// Defaults to the number of available (logical) CPU cores.
+    pub worker_count: usize,
 
-    // TODO: consider multi-worker setups with separate configs.
+    /// Worker configuration is the same for all the local workers.
     pub worker: worker::Config,
 
-    // Server configuration is optional as we can have a valid `Sim` instance
-    // without a server task.
+    pub leader: leader::Config,
+
+    /// Server configuration is optional as we can have a valid `Sim` instance
+    /// without a server task.
     pub server: Option<server::Config>,
 
     /// Flag controlling the optional automatic step processing.
     pub autostep: Option<Duration>,
+}
+
+impl Default for SimConfig {
+    fn default() -> Self {
+        Self {
+            worker_count: num_cpus::get(),
+            worker: worker::Config::default(),
+            leader: leader::Config::default(),
+            server: None,
+            autostep: None,
+        }
+    }
 }
 
 /// Spawns a local simulation instance.
@@ -54,22 +72,33 @@ pub async fn spawn() -> Result<SimHandle> {
 
 /// Spawns a local simulation instance based on provided configuration.
 pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<SimHandle> {
-    // Spawn the leader task
+    // Spawn the leader task.
     let mut leader_handle = leader::spawn(config.leader.clone(), cancel.clone())?;
-    // Spawn the worker task
-    let worker_handle = worker::spawn(config.worker.clone(), cancel.clone())?;
 
-    // Make sure leader and worker can talk to each other
-    leader_handle
-        .connect_to_local_worker(&worker_handle, true)
-        .await?;
+    // Spawn worker tasks.
+    // TODO: enable worker to worker connections, targetting a mesh topology.
+    // Currently we only support star topology where all workers are connected
+    // only to the leader.
+    let mut workers = FnvHashMap::default();
+    for _ in 0..config.worker_count {
+        let worker_handle = worker::spawn(config.worker.clone(), cancel.clone())?;
 
-    // Create the sim handle
+        // Make sure leader and worker can talk to each other.
+        leader_handle
+            .connect_to_local_worker(&worker_handle, true)
+            .await?;
+
+        let worker_id = worker_handle.id().await?;
+
+        workers.insert(worker_id, worker_handle);
+    }
+
+    // Create the sim handle.
     let mut handle = SimHandle {
-        cancel: cancel.clone(),
+        workers,
         leader: leader_handle,
-        worker: worker_handle,
         server: None,
+        cancel: cancel.clone(),
         config: config.clone(),
     };
 
@@ -78,16 +107,17 @@ pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<
     // NOTE: Resulting server handle can be used to send requests to the server
     // using the client API. The CTL interface is also available.
     if let Some(server_config) = config.server {
-        let mut server_handle =
-            server::spawn(server_config, handle.worker.clone(), cancel.clone())?;
+        // Extract a handle to a single worker to connect the server to.
+        let worker = handle.workers.values().next().unwrap();
 
-        // Attach the server to the worker
-        server_handle
-            .connect_to_worker(&handle.worker, true)
-            .await?;
+        // Spawn the server task.
+        let mut server_handle = server::spawn(server_config, cancel.clone())?;
 
-        // Register as a new client connecting to the server
-        // TODO: move this to within the server handle implementation
+        // Connect the server to the worker.
+        server_handle.connect_to_worker(&worker, true).await?;
+
+        // Register as a new client connecting to the server.
+        // TODO: move this to within the server handle implementation.
         let resp = server_handle
             .execute(Message::RegisterClientRequest(RegisterClientRequest {
                 name: "sim_handle".to_string(),
@@ -98,7 +128,7 @@ pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<
             }))
             .await?;
 
-        // Save the returned client id for use when querying the server
+        // Save the returned client id for use when querying the server.
         let client_id = if let Message::RegisterClientResponse(RegisterClientResponse {
             client_id,
             encoding,
@@ -108,7 +138,10 @@ pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<
         {
             Uuid::from_str(&client_id).unwrap()
         } else {
-            unimplemented!()
+            return Err(Error::UnexpectedResponse(format!(
+                "Client registration failed for local sim instance, got response: {:?}",
+                resp
+            )));
         };
         server_handle.client_id = Some(client_id);
 
@@ -162,8 +195,10 @@ pub async fn spawn_from_path(
 /// Local simulation instance handle.
 #[derive(Clone)]
 pub struct SimHandle {
+    pub workers: FnvHashMap<Uuid, worker::Handle>,
+
     pub leader: leader::Handle,
-    pub worker: worker::Handle,
+
     pub server: Option<server::Handle>,
 
     pub cancel: CancellationToken,
@@ -172,6 +207,16 @@ pub struct SimHandle {
 }
 
 impl SimHandle {
+    /// Convenience method for returning a single worker that can be used as
+    /// the entry point for interfacing with the simulation.
+    pub fn worker(&self) -> Result<(&Uuid, &worker::Handle)> {
+        if let Some(worker) = self.workers.iter().next() {
+            Ok(worker)
+        } else {
+            Err(Error::NoAvailableWorkers)
+        }
+    }
+
     /// Convenience method for creating a new local sim instance and
     /// populating it with data from the current one.
     pub async fn fork(&mut self) -> Result<SimHandle> {
@@ -195,15 +240,22 @@ impl SimHandle {
         Ok(forked)
     }
 
+    /// Pulls a new config and broadcasts to all relevant parties.
     pub async fn pull_config(&mut self, config: SimConfig) -> Result<()> {
-        self.worker
-            .ctl
-            .execute(Signal::from(
-                rpc::worker::Request::PullConfig(config.worker).into_local(),
-            ))
-            .await??
-            .discard_context()
-            .ok()?;
+        // Broadcast to workers.
+        for (_, worker) in &self.workers {
+            worker
+                .ctl
+                .execute(Signal::from(
+                    rpc::worker::Request::PullConfig(config.worker.clone()).into_local(),
+                ))
+                .await??
+                .discard_context()
+                .ok()?;
+        }
+
+        // TODO: send config to leader.
+        // TODO: send config to server.
 
         Ok(())
     }
@@ -235,8 +287,11 @@ impl SimHandle {
         behavior_script: Option<String>,
         triggers: Vec<EventName>,
     ) -> Result<MachineHandle> {
-        let machine =
-            crate::machine::spawn(behavior_script, triggers, self.worker.behavior_exec.clone())?;
+        let machine = crate::machine::spawn(
+            behavior_script,
+            triggers,
+            self.worker()?.1.behavior_exec.clone(),
+        )?;
         Ok(machine)
     }
 
@@ -266,10 +321,11 @@ impl SimHandle {
             f,
             "".to_owned(),
             triggers,
-            self.worker.behavior_exec.clone(),
+            self.worker()?.1.behavior_exec.clone(),
         )?;
 
-        self.worker
+        self.worker()?
+            .1
             .ctl
             .execute(Signal::from(rpc::worker::RequestLocal::AddBehavior(
                 target,
@@ -289,8 +345,8 @@ impl SimHandle {
     ) -> Result<()> {
         behavior::spawn_unsynced(
             f,
-            self.worker.behavior_broadcast.subscribe(),
-            self.worker.behavior_exec.clone(),
+            self.worker()?.1.behavior_broadcast.subscribe(),
+            self.worker()?.1.behavior_exec.clone(),
         )?;
 
         Ok(())
@@ -298,10 +354,15 @@ impl SimHandle {
 
     /// Broadcasts an event across the simulation.
     pub async fn invoke(&mut self, event: &str) -> Result<()> {
-        self.worker
+        self.worker()?
+            .1
             .ctl
             .execute(Signal::from(
-                rpc::worker::Request::Trigger(vec![event.to_owned()]).into_local(),
+                rpc::worker::Request::Invoke {
+                    events: vec![event.to_owned()],
+                    global: true,
+                }
+                .into_local(),
             ))
             .await??;
         Ok(())
@@ -342,14 +403,15 @@ impl SimHandle {
 
     pub async fn entity(&mut self, name: EntityName) -> Result<Entity> {
         let sig = self
-            .worker
+            .worker()?
+            .1
             .ctl
             .execute(Signal::from(
                 rpc::worker::Request::GetEntity(name).into_local(),
             ))
             .await??;
 
-        match sig.into_payload() {
+        match sig.discard_context() {
             rpc::worker::Response::Entity(entity) => Ok(entity),
             _ => unimplemented!(),
         }
@@ -357,14 +419,15 @@ impl SimHandle {
 
     pub async fn pull_entity(&mut self, name: EntityName, entity: Entity) -> Result<()> {
         let sig = self
-            .worker
+            .worker()?
+            .1
             .ctl
             .execute(Signal::from(
                 rpc::worker::Request::TakeEntity(name, entity).into_local(),
             ))
             .await??;
 
-        match sig.into_payload() {
+        match sig.discard_context() {
             rpc::worker::Response::Empty => Ok(()),
             _ => unimplemented!(),
         }
@@ -372,7 +435,8 @@ impl SimHandle {
 
     pub async fn entities(&mut self) -> Result<Vec<EntityName>> {
         let sig = self
-            .worker
+            .worker()?
+            .1
             .ctl
             .execute(Signal::from(rpc::worker::Request::EntityList.into_local()))
             .await??;
@@ -437,7 +501,7 @@ impl SimHandle {
         let req: rpc::leader::RequestLocal =
             rpc::leader::Request::SpawnEntity { name, prefab }.into();
         let resp = self.leader.ctl.execute(Signal::from(req)).await??;
-        match resp.into_payload() {
+        match resp.discard_context() {
             rpc::leader::Response::Empty => Ok(()),
             resp => Err(Error::UnexpectedResponse(format!("{resp}"))),
         }
@@ -454,7 +518,7 @@ impl SimHandle {
             .into();
             tokio::spawn(async move {
                 let resp = ctl.execute(Signal::from(req)).await??;
-                match resp.into_payload() {
+                match resp.discard_context() {
                     rpc::leader::Response::Empty => Ok(()),
                     resp => Err(Error::UnexpectedResponse(format!("{resp}"))),
                 }
@@ -493,21 +557,22 @@ impl SimHandle {
                 rpc::leader::Request::Model,
             )))
             .await??
-            .into_payload()
+            .discard_context()
             .try_into()?)
     }
 
     /// Queries the connected worker using the regular query definition.
     pub async fn query(&self, query: crate::Query) -> Result<crate::QueryProduct> {
         Ok(self
-            .worker
+            .worker()?
+            .1
             .ctl
             .execute(
                 Signal::from(rpc::worker::Request::ProcessQuery(query).into_local())
                     .originating_at(rpc::Caller::SimHandle),
             )
             .await??
-            .into_payload()
+            .discard_context()
             .try_into()?)
     }
 
@@ -517,7 +582,8 @@ impl SimHandle {
         query: crate::Query,
     ) -> Result<crate::executor::Receiver<Result<Signal<rpc::worker::Response>>>> {
         let rcv = self
-            .worker
+            .worker()?
+            .1
             .ctl
             .execute_to_multi(Signal::from(
                 rpc::worker::Request::Subscribe(triggers, query).into_local(),
@@ -529,7 +595,8 @@ impl SimHandle {
     /// Queries the cluster for a single value at the specified address.
     pub async fn get_var(&self, addr: Address) -> Result<Var> {
         let var = self
-            .worker
+            .worker()?
+            .1
             .query(
                 Query::default()
                     .filter(query::Filter::Name(vec![addr.entity.clone()]))
@@ -544,7 +611,8 @@ impl SimHandle {
     /// Asks the cluster to set variable at the specified address to the
     /// provided value.
     pub async fn set_var(&self, addr: Address, var: Var) -> Result<()> {
-        self.worker
+        self.worker()?
+            .1
             .ctl
             .execute(Signal::from(
                 rpc::worker::Request::SetVar(addr, var).into_local(),
@@ -554,7 +622,7 @@ impl SimHandle {
     }
 
     /// Gets the current value of the simulation clock.
-    pub async fn get_clock(&self) -> Result<usize> {
+    pub async fn get_clock(&self) -> Result<u64> {
         let sig = self
             .leader
             .execute(Signal::from(rpc::leader::Request::Clock))
@@ -603,6 +671,23 @@ impl SimHandle {
         }
         self.cancel.cancel();
         Ok(())
+    }
+
+    /// Pulls entity data and creates a snapshot.
+    pub async fn snapshot(&mut self) -> Result<Snapshot> {
+        let entities = Default::default();
+
+        let snap = Snapshot {
+            created_at: chrono::Utc::now().timestamp() as u64,
+            // TODO: count all the workers, also the ones that connected from
+            // the outside and don't reside within the same process.
+            worker_count: self.workers.len() as u32,
+            clock: self.get_clock().await?,
+            model: self.get_model().await?,
+            entities,
+        };
+
+        Ok(snap)
     }
 }
 
@@ -700,32 +785,47 @@ impl AsyncClient for SimClient {
                 ))
                 .await
         } else {
-            Err(Error::Other(
+            Err(Error::ServerNotConnected(
                 "sim handle doesn't have the server interface available".to_owned(),
             ))
         }
     }
 
     async fn unsubscribe(&mut self, subscription_id: Uuid) -> Result<()> {
-        self.0
-            .worker
-            .ctl
-            .execute(Signal::from(
-                rpc::worker::Request::Unsubscribe(subscription_id).into_local(),
-            ))
-            .await??;
-
-        Ok(())
-        // if let Some(server) = &self.0.server {
-        //     server
-        //         .client
-        //         .execute((None, Message::RegisterQueryRequest(triggers, q)))
-        //         .await
-        // } else {
-        //     Err(Error::Other(
-        //         "sim handle doesn't have the server interface available".to_owned(),
+        // self.0
+        //     .workers
+        //     .ctl
+        //     .execute(Signal::from(
+        //         rpc::worker::Request::Unsubscribe(subscription_id).into_local(),
         //     ))
-        // }
+        //     .await??;
+        // Ok(())
+
+        if let Some(server) = &self.0.server {
+            server
+                .client
+                .execute((None, Message::UnsubscribeRequest(subscription_id)))
+                .await?
+                .ok()
+        } else {
+            Err(Error::ServerNotConnected(
+                "sim handle doesn't have the server interface available".to_owned(),
+            ))
+        }
+    }
+
+    async fn snapshot(&mut self) -> Result<Snapshot> {
+        if let Some(server) = &self.0.server {
+            server
+                .client
+                .execute((Some(Uuid::nil()), Message::SnapshotRequest))
+                .await?
+                .try_into()
+        } else {
+            Err(Error::ServerNotConnected(
+                "sim handle doesn't have the server interface available".to_owned(),
+            ))
+        }
     }
 }
 

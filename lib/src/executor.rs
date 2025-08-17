@@ -47,7 +47,7 @@ impl<T> Signal<T> {
             None => {
                 self.ctx = Some(rpc::Context {
                     origin: caller,
-                    initiated_at: chrono::Utc::now(),
+                    initiated_at: chrono::Utc::now().timestamp_millis() as u64,
                     ..Default::default()
                 })
             }
@@ -61,7 +61,7 @@ impl<T> Signal<T> {
             None => {
                 self.ctx = Some(rpc::Context {
                     target: Some(target),
-                    initiated_at: chrono::Utc::now(),
+                    initiated_at: chrono::Utc::now().timestamp_millis() as u64,
                     ..Default::default()
                 })
             }
