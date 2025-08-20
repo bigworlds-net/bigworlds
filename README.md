@@ -1,4 +1,4 @@
-## <img src="assets/bigworlds-logo.png" width="300">
+## <img src="assets/bigworlds-banner.jpg">
 
 Dynamically scalable virtual worlds.
 
@@ -14,8 +14,6 @@ made up of large numbers of discrete simulated elements. The goal is to enable
 effortless deployment of huge virtual worlds with billions of interacting
 entities and tens of thousands of simultanously connected clients.
 
-<img src="assets/diagram.png">
-
 
 > [!NOTE]  
 > `bigworlds` is currently under heavy development. Here's the simplified
@@ -28,6 +26,8 @@ entities and tens of thousands of simultanously connected clients.
 > snapshots
 > - [ ] visibility: `websocket` client, browser-based (wasm) inspector
 > - [ ] polyglot demo: Unity C# viewer for one of the existing demos 
+
+<img src="assets/diagram.png">
 
 
 ### What is `bigworlds`?
