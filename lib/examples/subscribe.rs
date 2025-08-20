@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let client_ = client.clone();
     tokio::spawn(async move {
         while let Ok(Some(message)) = msg_stream.recv().await {
+            println!("client: got response from stream");
             match message {
                 Message::SubscribeResponse(id) => {
                     let mut client_ = client_.clone();
@@ -75,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         client_.unsubscribe(id).await.unwrap();
+                        println!("unsubscribed");
                     });
                 }
                 Message::QueryResponse(product) => {

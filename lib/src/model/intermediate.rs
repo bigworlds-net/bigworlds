@@ -52,7 +52,7 @@ impl Model {
     /// from the files.
     pub fn from_files<FS: vfs::FileSystem>(fs: &FS, root: Option<&str>) -> Result<Self> {
         // Read the manifest at `model.toml` into intermediate representation.
-        let mut model: Model = util::deser_struct_from_path(fs, MODEL_MANIFEST_FILE)?;
+        let mut model: Model = util::struct_from_path(fs, MODEL_MANIFEST_FILE)?;
         debug!("Intermediate model manifest: {model:?}");
 
         // Starting at the manifest, follow the `include`s recursively and
@@ -65,7 +65,7 @@ impl Model {
         loop {
             // Pop another include
             if let Some(include) = to_include.pop() {
-                println!("including from path: {include}");
+                trace!("including from path: {include}");
 
                 // Handle dirs and wildcard expansion.
                 let path = if include.ends_with("/*") {
@@ -84,7 +84,7 @@ impl Model {
 
                 // Read the include.
                 let mut include_model: Model =
-                    util::deser_struct_from_path(fs, &include).map_err(|e| {
+                    util::struct_from_path(fs, &include).map_err(|e| {
                         crate::Error::Other(format!("unable to read include at `{}`: {e}", include))
                     })?;
                 // println!("include_model at {include}: {include_model:?}");
@@ -143,7 +143,7 @@ impl Model {
                     }
                 }
 
-                println!("include_model.behaviors: {:?}", include_model.behaviors);
+                // println!("include_model.behaviors: {:?}", include_model.behaviors);
 
                 // Merge the include into the main model.
                 model.merge(include_model);

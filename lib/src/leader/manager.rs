@@ -7,10 +7,10 @@ use fnv::FnvHashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::leader::{State, Worker, WorkerExec};
 use crate::worker::WorkerId;
-use crate::{rpc, Error, Executor, Model, Result};
+use crate::{rpc, Error, Executor, Model, Result, Signal};
 
 use super::{Config, LeaderId, Status};
 
@@ -51,6 +51,10 @@ impl ManagerExec {
         } else {
             Err(Error::UnexpectedResponse(format!("")))
         }
+    }
+
+    pub async fn set_clock(&self, clock: u64) -> Result<()> {
+        self.execute(Request::SetClock(clock)).await??.empty()
     }
 
     pub async fn get_random_worker(&self) -> Result<Worker> {
@@ -163,6 +167,10 @@ async fn handle_request(req: Request, mut leader: &mut State) -> Result<Response
         Request::GetMeta => Ok(Response::GetMeta(leader.id)),
         Request::Status => Ok(Response::Status(leader.status.clone())),
         Request::GetClock => Ok(Response::Clock(leader.clock)),
+        Request::SetClock(clock) => {
+            leader.clock = clock;
+            Ok(Response::Empty)
+        }
         Request::IncrementClock => {
             leader.clock += 1;
             Ok(Response::Clock(leader.clock))
@@ -291,12 +299,13 @@ async fn handle_request(req: Request, mut leader: &mut State) -> Result<Response
     }
 }
 
-#[derive(Clone, strum::Display)]
+#[derive(Clone, Debug, strum::Display)]
 pub enum Request {
     GetConfig,
     GetMeta,
     Status,
     GetClock,
+    SetClock(u64),
     IncrementClock,
     GetWorkers,
     AddWorker(Worker),
@@ -309,7 +318,7 @@ pub enum Request {
     ReorganizeEntities,
 }
 
-#[derive(Clone, strum::Display)]
+#[derive(Clone, Debug, strum::Display)]
 pub enum Response {
     GetConfig(Config),
     GetMeta(LeaderId),
@@ -320,4 +329,17 @@ pub enum Response {
     WorkerCount(usize),
     GetModel(Model),
     Empty,
+}
+
+impl Response {
+    pub fn empty(self) -> Result<()> {
+        match self {
+            Self::Empty => Ok(()),
+            _ => Err(Error::UnexpectedResponse(format!("{:?}", self))),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.empty().is_ok()
+    }
 }

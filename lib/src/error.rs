@@ -1,5 +1,7 @@
+use std::backtrace::Backtrace;
 use std::net::{AddrParseError, SocketAddr};
 use std::num::ParseIntError;
+use std::ops::Deref;
 
 use thiserror::Error;
 
@@ -32,7 +34,7 @@ pub enum Error {
     FailedConversion(String),
     #[error("bincode error: {0}")]
     BincodeError(String),
-    #[error("bincode error: {0}")]
+    #[error("serde json error: {0}")]
     SerdeJsonError(String),
 
     #[error("other: {0}")]
@@ -61,6 +63,8 @@ pub enum Error {
 
     #[error("leader not connected: {0}")]
     LeaderNotConnected(String),
+    #[error("leader unreachable: {0}")]
+    LeaderUnreachable(String),
     #[error("leader not selected: {0}")]
     LeaderNotSelected(String),
     #[error("worker not registered: {0}")]
@@ -123,7 +127,6 @@ pub enum Error {
     #[error("invalid local address: {0}")]
     InvalidLocalAddress(String),
 
-    #[cfg(feature = "lz4")]
     #[error("failed decompressing snapshot: {0}")]
     SnapshotDecompressionError(String),
     #[error("failed reading snapshot header: {0}")]
@@ -181,6 +184,9 @@ pub enum Error {
     #[error("signal context required: {0}")]
     ContextRequired(String),
 
+    #[error("archive functionality disabled")]
+    ArchiveDisabled,
+
     #[error("string too long: {0}")]
     StringTooLong(String),
 
@@ -195,6 +201,13 @@ pub enum Error {
 impl From<fjall::Error> for Error {
     fn from(e: fjall::Error) -> Self {
         Self::FjallError(e.to_string())
+    }
+}
+
+#[cfg(feature = "archive")]
+impl From<rkyv::rancor::Error> for Error {
+    fn from(e: rkyv::rancor::Error) -> Self {
+        Self::RkyvError(e.to_string())
     }
 }
 

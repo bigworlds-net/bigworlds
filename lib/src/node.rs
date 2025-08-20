@@ -27,7 +27,7 @@ mod pov;
 
 pub use config::Config;
 pub use handle::Handle;
-pub use pov::RemoteNode;
+pub use pov::OtherNode;
 
 use std::net::SocketAddr;
 
@@ -65,7 +65,7 @@ pub struct State {
     pub leaders: Vec<leader::Handle>,
     pub servers: Vec<server::Handle>,
 
-    pub nodes: Vec<RemoteNode>,
+    pub nodes: Vec<OtherNode>,
 }
 
 /// Spawns a `Node` task on the current runtime.
@@ -101,7 +101,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                     };
                     debug!("node: received net request: {:?}", req);
 
-                    // Identify caller and check privileges.
+                    // TODO: identify caller and check privileges.
 
                     let resp = handle_request(req, &mut node, cancel.clone());
                     s.send(encode(resp.map_err(|e| e.to_string()), Encoding::Bincode).unwrap());

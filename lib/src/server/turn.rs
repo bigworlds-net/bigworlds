@@ -38,7 +38,7 @@ pub async fn handle_advance_request(
     // Access clock watch and determine target clock value.
     let mut clock_watch = server.lock().await.clock.1.clone();
     let current_clock = clock_watch.borrow().clone();
-    let target_clock = current_clock + req.step_count as usize;
+    let target_clock = current_clock + req.step_count as u64;
 
     // Set the calling client as not blocking until the target clock is
     // reached.

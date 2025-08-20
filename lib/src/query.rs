@@ -248,27 +248,27 @@ pub enum Trigger {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Filter {
-    /// Select entities that have all the specified components
+    /// Select entities that have all the specified components.
     AllComponents(Vec<CompName>),
-    /// Select entities that have one or more of specified components
+    /// Select entities that have one or more of specified components.
     SomeComponents(Vec<CompName>),
-    /// Select entities that have the specified component
+    /// Select entities that have the specified component.
     Component(CompName),
-    /// Select entities that match any of the provided names
+    /// Select entities that match any of the provided names.
     Name(Vec<EntityName>),
-    /// Filter by entity id
+    /// Filter by entity id.
     Id(Vec<EntityId>),
-    /// Filter by some variable being in specified range
+    /// Filter by some variable being in specified range.
     VarRange(LocalAddress, Var, Var),
-    /// Filter by some variable being in specified range
+    /// Filter by some variable being in specified range.
     AttrRange(String, Var, Var),
     /// Filter by entity distance to some point, matching on the position
-    /// component (x, y and z coordinates, then x,y and z max distance)
-    // TODO use single address to vector3 value
+    /// component (x, y and z coordinates, then x,y and z max distance).
+    // TODO use single address to vector3 value.
     Distance(Address, Address, Address, Float, Float, Float),
     /// Filter by entity distance to any of multiple points.
     DistanceMultiPoint(Vec<(Address, Address, Address, Float, Float, Float)>),
-    /// Select entities based on where they are currently stored
+    /// Select entities based on where they are currently stored.
     Node(NodeFilter),
 }
 
@@ -290,16 +290,16 @@ pub enum NodeFilter {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Map {
-    /// Map all the data stored on selected entities
+    /// Map all the data stored on selected entities.
     All,
-    /// Select data based on address string matching
+    /// Select data based on address string matching.
     SelectAddrs(Vec<Address>),
-    /// Select data bound to selected components
+    /// Select data bound to selected components.
     Components(Vec<CompName>),
-    /// Select data bound to a single component
+    /// Select data bound to a single component.
     Component(CompName),
-    Var(VarType, VarName),
-    VarName(VarName),
+
+    Var(VarName),
     VarType(VarType),
 }
 
@@ -322,21 +322,21 @@ impl Map {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Description {
-    /// Describe values with an address tuple
+    /// Describe values with an address tuple.
     NativeDescribed,
-    /// Describe values with an address structure
+    /// Describe values with an address structure.
     Addressed,
-    /// Describe values with with an entity name
+    /// Describe values with with an entity name.
     Entity,
-    /// Describe multiple values with a single entity name
+    /// Describe multiple values with a single entity name.
     EntityMany,
-    /// Describe values with with a component name
+    /// Describe values with with a component name.
     Component,
-    /// Describe values with a variable name
+    /// Describe values with a variable name.
     Var,
-    /// Describe values with a (component, var) tuple
+    /// Describe values with a (component, var) tuple.
     ComponentVar,
-    /// Values ordered based on an order table
+    /// Values ordered based on an order table.
     Ordered,
     #[default]
     None,
@@ -349,12 +349,12 @@ pub enum Description {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Layout {
-    /// Use the internal value representation type built on Rust's enum
+    /// Use the internal value representation type built on Rust's enum.
     #[default]
     Var,
-    /// Coerce all values to strings
+    /// Coerce all values to strings.
     String,
-    /// Use a separate map/list for each variable type
+    /// Use a separate map/list for each variable type.
     Typed,
 }
 
@@ -368,14 +368,14 @@ pub enum Layout {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub enum Scope {
-    /// Broadcast the query across the whole cluster
+    /// Broadcast the query across the whole cluster.
     #[default]
     Global,
     /// Restrict the query to workers running on the same node.
     LocalNode,
-    /// Restrict the query to the worker that originally received the query
+    /// Restrict the query to the worker that originally received the query.
     LocalWorker,
-    /// Number of times the query can be "broadcasted" to all visible workers
+    /// Number of times the query can be "broadcasted" to all visible workers.
     Broadcasts(u8),
     /// Number of times the query will be passed on to another worker.
     ///
@@ -384,7 +384,7 @@ pub enum Scope {
     /// If the number is smaller than the number of currently visible workers,
     /// a random selection of workers is used.
     Edges(u8),
-    /// Number of workers to receive the query
+    /// Number of workers to receive the query.
     Workers(u8),
     /// Maximum roundtrip time allowed when considering broadcasting query to
     /// remote workers.
@@ -397,7 +397,7 @@ pub enum Scope {
 }
 
 /// Combines multiple products.
-// TODO: expand beyond only similarly described products
+// TODO: expand beyond only similarly described products.
 pub fn combine_products(mut products: Vec<QueryProduct>) -> QueryProduct {
     let mut final_product = match products.pop() {
         Some(p) => p,

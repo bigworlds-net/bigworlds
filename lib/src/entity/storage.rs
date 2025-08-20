@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use fnv::FnvHashMap;
+use serde_with::serde_as;
 
 use crate::address::{Address, LocalAddress, SEPARATOR_SYMBOL};
 use crate::error::{Error, Result};
@@ -10,12 +11,14 @@ pub type StorageIndex = (CompName, VarName);
 
 /// Entity's data storage structure.
 // TODO: benchmark performance of the alternative storage layouts
+#[serde_as]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "archive",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct Storage {
+    #[serde_as(as = "Vec<(_, _)>")]
     pub map: FnvHashMap<StorageIndex, Var>,
 }
 

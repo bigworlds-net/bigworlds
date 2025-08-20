@@ -1,6 +1,9 @@
 use crate::{
-    rpc::worker::{Request, RequestLocal, Response},
-    LocalExec, RemoteExec, Result, Signal,
+    rpc::{
+        self,
+        worker::{Request, RequestLocal, Response},
+    },
+    Error, Executor, LocalExec, RemoteExec, Result, Signal,
 };
 
 pub type WorkerRemoteExec = RemoteExec<Signal<Request>, Result<Signal<Response>>>;
@@ -12,6 +15,26 @@ pub enum WorkerExec {
     Remote(WorkerRemoteExec),
     /// Local executor for sending requests to worker within the same runtime.
     Local(WorkerLocalExec),
+}
+
+#[async_trait::async_trait]
+impl Executor<Signal<rpc::worker::Request>, Signal<rpc::worker::Response>> for WorkerExec {
+    async fn execute(
+        &self,
+        sig: Signal<rpc::worker::Request>,
+    ) -> Result<Signal<rpc::worker::Response>> {
+        match self {
+            WorkerExec::Remote(remote_exec) => remote_exec.execute(sig).await?,
+            WorkerExec::Local(local_exec) => {
+                let sig = Signal::new(sig.payload.into(), sig.ctx);
+                local_exec
+                    .execute(sig)
+                    .await
+                    .map_err(|e| Error::Other(e.to_string()))?
+                    .map_err(|e| Error::Other(e.to_string()))
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for WorkerExec {

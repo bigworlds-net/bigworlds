@@ -41,11 +41,11 @@ use tokio_stream::StreamExt;
 use crate::address::LocalAddress;
 use crate::behavior::BehaviorHandle;
 use crate::entity::StorageIndex;
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::model::Var;
 use crate::query::{Query, QueryProduct};
 use crate::Address;
-use crate::{rpc, CompName, EntityId, EntityName, EventName, Executor, VarType};
+use crate::{rpc, CompName, EntityId, EntityName, EventName, Executor, Signal, VarType};
 
 pub const START_STATE_NAME: &'static str = "start";
 

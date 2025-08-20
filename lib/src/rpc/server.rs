@@ -1,13 +1,13 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::net::CompositeAddress;
 use crate::server::ServerId;
 use crate::worker::WorkerId;
 use crate::Result;
 
-use super::{msg::Message, worker};
+use super::{msg::Message, worker, Signal};
 
 #[derive(Clone)]
 pub enum RequestLocal {
@@ -36,7 +36,7 @@ pub enum Request {
     Message(Message),
 
     Redirect,
-    ClockChangedTo(usize),
+    ClockChangedTo(u64),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

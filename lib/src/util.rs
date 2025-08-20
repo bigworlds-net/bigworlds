@@ -132,8 +132,8 @@ pub fn read_text_file<FS: vfs::FileSystem>(fs: &FS, file: &str) -> Result<String
     Ok(content)
 }
 
-/// Create a static deser object from given path using serde.
-pub fn deser_struct_from_path<FS: vfs::FileSystem, T>(fs: &FS, file_path: &str) -> Result<T>
+/// Create an object `T` from given file path.
+pub fn struct_from_path<FS: vfs::FileSystem, T>(fs: &FS, file_path: &str) -> Result<T>
 where
     for<'de> T: serde::Deserialize<'de>,
 {
@@ -376,9 +376,8 @@ pub fn decode<'de, P: Deserialize<'de>>(bytes: &'de [u8], encoding: Encoding) ->
     Ok(unpacked)
 }
 
-// TODO allow for different compression modes
+// TODO: allow for different compression modes.
 /// Compress bytes using lz4.
-#[cfg(feature = "lz4")]
 pub(crate) fn compress(bytes: &Vec<u8>) -> Result<Vec<u8>> {
     let compressed = lz4::block::compress(bytes.as_slice(), None, true)?;
     Ok(compressed)

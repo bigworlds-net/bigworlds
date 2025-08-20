@@ -1,6 +1,9 @@
 use crate::{
-    rpc::leader::{Request, RequestLocal, Response},
-    LocalExec, RemoteExec, Result, Signal,
+    rpc::{
+        self,
+        leader::{Request, RequestLocal, Response},
+    },
+    Error, Executor, LocalExec, RemoteExec, Result, Signal,
 };
 
 pub type LeaderRemoteExec = RemoteExec<Signal<Request>, Result<Signal<Response>>>;
@@ -11,6 +14,26 @@ pub enum LeaderExec {
     Remote(LeaderRemoteExec),
     /// Local executor for sending requests to leader within the same runtime.
     Local(LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>),
+}
+
+#[async_trait::async_trait]
+impl Executor<Signal<rpc::leader::Request>, Signal<rpc::leader::Response>> for LeaderExec {
+    async fn execute(
+        &self,
+        sig: Signal<rpc::leader::Request>,
+    ) -> Result<Signal<rpc::leader::Response>> {
+        match self {
+            LeaderExec::Remote(remote_exec) => remote_exec.execute(sig).await?,
+            LeaderExec::Local(local_exec) => {
+                let sig = Signal::new(sig.payload.into(), sig.ctx);
+                local_exec
+                    .execute(sig)
+                    .await
+                    .map_err(|e| Error::Other(e.to_string()))?
+                    .map_err(|e| Error::Other(e.to_string()))
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for LeaderExec {

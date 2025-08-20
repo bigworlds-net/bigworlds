@@ -1,7 +1,6 @@
-use crate::executor::{Executor, LocalExec, Signal};
+use crate::executor::{Executor, LocalExec};
 use crate::net::CompositeAddress;
-use crate::rpc;
-use crate::rpc::msg::Message;
+use crate::rpc::{self, msg::Message, Signal};
 use crate::server::{worker, ClientId};
 use crate::worker::WorkerId;
 use crate::Result;

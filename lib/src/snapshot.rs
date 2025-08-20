@@ -24,7 +24,8 @@ pub const SNAPSHOTS_DIR_NAME: &str = "snapshots";
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct Snapshot {
-    pub created_at: u64,
+    /// Creation timestamp in seconds.
+    pub created_at: u32,
 
     pub worker_count: u32,
 
@@ -36,22 +37,13 @@ pub struct Snapshot {
 impl TryFrom<&Vec<u8>> for Snapshot {
     type Error = Error;
     fn try_from(bytes: &Vec<u8>) -> Result<Self> {
-        #[cfg(feature = "lz4")]
-        {
-            match lz4::block::decompress(&bytes, None) {
-                Ok(data) => {
-                    let snapshot: Snapshot = bincode::deserialize(&data)
-                        .map_err(|e| Error::FailedReadingSnapshot(e.to_string()))?;
-                    Ok(snapshot)
-                }
-                Err(e) => Err(Error::SnapshotDecompressionError(e.to_string())),
+        match lz4::block::decompress(&bytes, None) {
+            Ok(data) => {
+                let snapshot: Snapshot = bincode::deserialize(&data)
+                    .map_err(|e| Error::FailedReadingSnapshot(e.to_string()))?;
+                Ok(snapshot)
             }
-        }
-        #[cfg(not(feature = "lz4"))]
-        {
-            let snapshot: Snapshot = bincode::deserialize(&bytes)
-                .map_err(|e| Error::FailedReadingSnapshot(e.to_string()))?;
-            Ok(snapshot)
+            Err(e) => Err(Error::SnapshotDecompressionError(e.to_string())),
         }
     }
 }
@@ -59,16 +51,18 @@ impl TryFrom<&Vec<u8>> for Snapshot {
 impl Snapshot {
     pub fn to_bytes(&self, human_readable: bool, compress: bool) -> Result<Vec<u8>> {
         let mut data: Vec<u8> = if human_readable {
-            serde_json::to_vec(&self)?
+            // TODO: doing human_readable snapshots correctly would require
+            // handling artifacts differently. Right now the artifacts' bytes
+            // make things unreadable.
+            serde_json::to_string_pretty(&self)?.into_bytes()
         } else {
             bincode::serialize(&self).map_err(|e| Error::FailedCreatingSnapshot(e.to_string()))?
         };
-        #[cfg(feature = "lz4")]
-        {
-            if compress && !human_readable {
-                data = lz4::block::compress(&data, None, true)?;
-            }
+
+        if compress && !human_readable {
+            data = lz4::block::compress(&data, None, true)?;
         }
+
         Ok(data)
     }
 }

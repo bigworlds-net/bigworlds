@@ -1,10 +1,9 @@
 use std::str::FromStr;
 
 use crate::address::ShortLocalAddress;
-use crate::executor::Signal;
 use crate::machine::cmd::CommandResult;
 use crate::machine::{Error, ErrorKind, LocationInfo, Machine, Result};
-use crate::{rpc, EntityId, EntityName, Executor, PrefabName};
+use crate::{rpc, EntityId, EntityName, Executor, PrefabName, Signal};
 
 use super::Command;
 

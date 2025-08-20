@@ -7,8 +7,8 @@ use bigworlds::sim::SimConfig;
 use clap::builder::PossibleValue;
 use clap::ArgMatches;
 
-use bigworlds::util::{find_model_root, get_snapshot_paths};
-use bigworlds::ServerConfig;
+use bigworlds::util::{self, find_model_root, get_snapshot_paths};
+use bigworlds::{ServerConfig, Snapshot};
 use notify::Watcher;
 use tokio_util::sync::CancellationToken;
 
@@ -121,7 +121,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
             if let Some(snapshot) = matches.get_one::<String>("snapshot") {
                 let available = get_snapshot_paths(root)?;
                 if available.len() == 1 {
-                    return start_run_snapshot(available[0].clone(), matches).await;
+                    return start_run_snapshot(available[0].clone(), matches, cancel.clone()).await;
                 } else if available.len() > 0 {
                     return Err(Error::msg(format!(
                         "choose one of the available snapshots: {}",
@@ -143,7 +143,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
     if matches.get_one::<String>("scenario").is_none() {
         return start_run_model(path, matches, cancel).await;
     } else if matches.get_one::<String>("snapshot").is_none() {
-        return start_run_snapshot(path, matches).await;
+        return start_run_snapshot(path, matches, cancel).await;
     } else {
         if path.is_file() {
             // decide whether the path looks more like scenario or snapshot
@@ -152,7 +152,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
                     return start_run_model(path, matches, cancel).await;
                 }
             }
-            return start_run_snapshot(path, matches).await;
+            return start_run_snapshot(path, matches, cancel).await;
         }
         // path is provided but it's a directory
         else {
@@ -201,7 +201,7 @@ async fn start_run_model(
         })
     }
 
-    let mut sim = bigworlds::sim::spawn_from_path(
+    let mut sim = bigworlds::sim::spawn_from_model_at(
         model_root,
         matches.get_one::<String>("scenario").map(|s| s.as_str()),
         config,
@@ -288,23 +288,31 @@ async fn start_run_model(
     Ok(())
 }
 
-async fn start_run_snapshot(path: PathBuf, matches: &ArgMatches) -> Result<()> {
+async fn start_run_snapshot(
+    path: PathBuf,
+    matches: &ArgMatches,
+    cancel: CancellationToken,
+) -> Result<()> {
     info!("Running interactive session using snapshot at: {:?}", path);
 
-    // start the local sim task
-    let mut sim = bigworlds::sim::spawn().await?;
+    let mut config = SimConfig::default();
 
-    // let response = sim
-    //     .server
-    //     .execute(
-    //         UploadProjectRequest {
-    //             archive: Vec::new(),
-    //         }
-    //         .into(),
-    //     )
-    //     .await?;
+    if let Some(server) = matches.get_many::<String>("server") {
+        config.server = Some(ServerConfig {
+            listeners: server
+                .into_iter()
+                .filter_map(|s| {
+                    s.parse()
+                        .inspect_err(|e| warn!("provided incorrect address: {s}"))
+                        .ok()
+                })
+                .collect::<Vec<_>>(),
+            ..Default::default()
+        })
+    }
 
-    let cancel = sim.cancel.clone();
+    let mut sim = bigworlds::sim::spawn_from_snapshot_at(path, config, cancel.clone()).await?;
+
     if matches.get_flag("interactive") {
         interactive::start(
             sim.as_client(),
@@ -312,8 +320,9 @@ async fn start_run_snapshot(path: PathBuf, matches: &ArgMatches) -> Result<()> {
                 .get_one::<String>("icfg")
                 .unwrap_or(&interactive::config::CONFIG_FILE.to_string()),
             None,
-            cancel,
-        );
+            cancel.clone(),
+        )
+        .await?;
     }
     Ok(())
 }

@@ -16,6 +16,7 @@ use std::str::FromStr;
 use behavior::Behavior;
 use fnv::FnvHashMap;
 use semver::{Version, VersionReq};
+use serde_with::serde_as;
 use toml::Value;
 
 use crate::address::{Address, LocalAddress, ShortLocalAddress, SEPARATOR_SYMBOL};
@@ -38,6 +39,7 @@ pub struct Scenario {
     pub name: String,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(
     feature = "archive",
@@ -46,6 +48,7 @@ pub struct Scenario {
 pub struct Entity {
     pub name: EntityName,
     pub prefab: Option<PrefabName>,
+    #[serde_as(as = "Vec<(_, _)>")]
     pub data: FnvHashMap<LocalAddress, crate::Var>,
 }
 

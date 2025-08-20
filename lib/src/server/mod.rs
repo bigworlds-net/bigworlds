@@ -26,12 +26,12 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::executor::{Executor, ExecutorMulti, LocalExec, Signal};
+use crate::executor::{Executor, ExecutorMulti, LocalExec};
 use crate::net::ConnectionOrAddress;
 use crate::net::{Encoding, Transport};
 use crate::rpc::msg::{self, DataPullRequest, Message, PullRequestData};
 use crate::rpc::server::{RequestLocal, Response};
-use crate::rpc::Participant;
+use crate::rpc::{Participant, Signal};
 use crate::service::Service;
 use crate::time::Instant;
 use crate::util::{decode, encode};
@@ -85,7 +85,7 @@ pub struct State {
     /// Time of creation of this server.
     pub started_at: Instant,
 
-    pub clock: (watch::Sender<usize>, watch::Receiver<usize>),
+    pub clock: (watch::Sender<u64>, watch::Receiver<u64>),
     pub blocked: (watch::Sender<u8>, watch::Receiver<u8>),
 
     cancel: CancellationToken,
@@ -153,7 +153,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
         cache: Cache::default(),
         stats: Stats::default(),
         started_at: Instant::now(),
-        clock: tokio::sync::watch::channel(0 as usize),
+        clock: tokio::sync::watch::channel(0 as u64),
         blocked: tokio::sync::watch::channel(0),
         cancel: cancel.clone(),
     }));
@@ -569,7 +569,7 @@ async fn handle_message(
                             )
                             .await?
                             .discard_context()
-                            .is_ok()
+                            .is_empty()
                         {
                             // Passed auth check.
                             ()
@@ -753,10 +753,14 @@ async fn handle_message(
                 .await
                 .unwrap();
 
+            println!("server: starting subscribe request loop");
+
             while let Ok(Some(sig)) = worker_recv.recv().await {
+                println!("server: sig: {:?}", sig);
                 if let Ok(Signal { payload, .. }) = sig {
                     match payload {
                         rpc::worker::Response::Query(product) => {
+                            println!("server: query");
                             let msg = Message::QueryResponse(product);
                             if let Some(sender) = &resp_stream_bytes {
                                 sender
@@ -771,6 +775,7 @@ async fn handle_message(
                             }
                         }
                         rpc::worker::Response::Subscribe(id) => {
+                            println!("server: subscribe id");
                             let msg = Message::SubscribeResponse(id);
                             if let Some(sender) = &resp_stream_bytes {
                                 sender
@@ -795,7 +800,7 @@ async fn handle_message(
                 let sig = worker
                     .execute(Signal::from(rpc::worker::Request::Unsubscribe(id)))
                     .await?;
-                sig.payload.ok()?;
+                sig.payload.empty()?;
                 Ok(Some(Message::OK))
             } else {
                 Err(Error::WorkerNotConnected("".to_owned()))
@@ -810,7 +815,7 @@ async fn handle_message(
                     }))
                     .await?
                     .discard_context()
-                    .ok()?;
+                    .empty()?;
                 Ok(Some(Message::OK))
             } else {
                 Err(Error::WorkerNotConnected("".to_owned()))

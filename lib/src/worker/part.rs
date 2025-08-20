@@ -13,12 +13,12 @@ use tokio_stream::StreamExt;
 use crate::address::LocalAddress;
 use crate::behavior::{BehaviorHandle, BehaviorTarget};
 use crate::entity::Entity;
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::model::behavior::BehaviorInner;
 use crate::model::{self, EventModel, PrefabModel};
 use crate::{
     behavior, rpc, util, EntityId, EntityName, Error, EventName, Executor, Model, PrefabName,
-    Result, Var,
+    Result, Signal, Snapshot, Var,
 };
 
 #[cfg(feature = "machine")]
@@ -32,7 +32,11 @@ use super::WorkerId;
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct Config {
-    /// Master switch for the automatic entity archiving.
+    /// Master switch for enabling or disabling the fs-backed archiving
+    /// functionality.
+    pub enable_archive: bool,
+
+    /// Switch for the automatic entity archiving.
     pub auto_archive_entities: bool,
     /// Number of seconds of no access activity after which entity is archived.
     pub archive_entity_after_secs: u32,
@@ -60,6 +64,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            enable_archive: true,
+
             auto_archive_entities: false,
             archive_entity_after_secs: 5,
 
@@ -87,7 +93,7 @@ pub struct Partition {
     ///
     /// Based on chosen policy, entities can be moved into the archive based
     /// on observed access patterns.
-    pub archive: fjall::Partition,
+    pub archive: Option<fjall::Partition>,
 
     /// Handles to synced behaviors.
     pub behaviors: FnvHashMap<BehaviorTarget, Vec<BehaviorHandle>>,
@@ -123,21 +129,30 @@ impl Partition {
         config: Config,
         worker_id: WorkerId,
     ) -> Result<Self> {
-        let archive_path = util::get_local_data_dir()?
-            .join("cluster")
-            .join(worker_id.simple().to_string());
-        std::fs::create_dir_all(&archive_path);
+        let archive = if config.enable_archive {
+            let archive_path = util::get_local_data_dir()?
+                .join("cluster")
+                .join(worker_id.simple().to_string());
+            std::fs::create_dir_all(&archive_path);
+
+            Some(
+                fjall::Config::new(archive_path)
+                    .max_write_buffer_size(config.archive_max_write_buffer_size_bytes)
+                    .max_journaling_size(config.archive_max_journaling_size)
+                    .open()?
+                    .open_partition(
+                        "archive",
+                        fjall::PartitionCreateOptions::default()
+                            .max_memtable_size(64 * 1024 * 1024),
+                    )?,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             entities: FnvHashMap::default(),
-            archive: fjall::Config::new(archive_path)
-                .max_write_buffer_size(config.archive_max_write_buffer_size_bytes)
-                .max_journaling_size(config.archive_max_journaling_size)
-                .open()?
-                .open_partition(
-                    "archive",
-                    fjall::PartitionCreateOptions::default().max_memtable_size(128 * 1024 * 1024),
-                )?,
+            archive,
             #[cfg(feature = "machine")]
             machines: Default::default(),
             behaviors: FnvHashMap::default(),
@@ -181,7 +196,12 @@ impl Partition {
     }
 
     pub fn get_entity_archived(&self, name: &EntityName) -> Result<crate::entity::Entity> {
-        if let Ok(Some(slice)) = self.archive.get(name) {
+        if let Ok(Some(slice)) = self
+            .archive
+            .as_ref()
+            .ok_or(Error::ArchiveDisabled)?
+            .get(name)
+        {
             #[cfg(feature = "archive")]
             unsafe {
                 let entity_arch = rkyv::access_unchecked::<crate::entity::ArchivedEntity>(&slice);
@@ -228,7 +248,11 @@ impl Partition {
             #[cfg(not(feature = "archive"))]
             let bytes = bincode::serialize(&entity)?;
 
-            self.archive.insert(name, bytes.as_slice()).unwrap();
+            self.archive
+                .as_mut()
+                .ok_or(Error::ArchiveDisabled)?
+                .insert(name, bytes.as_slice())
+                .unwrap();
         } else {
             self.entities.insert(name, entity);
         }
@@ -276,7 +300,13 @@ impl Partition {
         // cold storage.
         if self.entities.remove(&name).is_some() {
             Ok(())
-        } else if self.archive.remove(&name).is_ok() {
+        } else if self
+            .archive
+            .as_mut()
+            .ok_or(Error::ArchiveDisabled)?
+            .remove(&name)
+            .is_ok()
+        {
             Ok(())
         } else {
             Err(Error::FailedGettingEntityByName(name))
@@ -323,34 +353,12 @@ impl Partition {
                 #[cfg(not(feature = "archive"))]
                 let entity_serialized = bincode::serialize(&entity)?;
                 self.archive
+                    .as_mut()
+                    .ok_or(Error::ArchiveDisabled)?
                     .insert(entity_name, entity_serialized.as_slice())?;
             }
         }
 
         Ok(len)
-    }
-
-    /// Serialize partition's entity data to a vector of bytes.
-    ///
-    /// # Behaviors
-    ///
-    /// Running behavior tasks are not persisted. Any state they might hold
-    /// can be lost at any time unless they save it out to entity storage.
-    ///
-    /// # Compression
-    ///
-    /// Optional compression using zstd can be performed.
-    pub fn to_snapshot(&self, name: &str, compress: bool) -> Result<Vec<u8>> {
-        unimplemented!()
-        // let mut entity_data = bincode::serialize(&self.entities)?;
-
-        // #[cfg(feature = "lz4")]
-        // {
-        //     if compress {
-        //         entity_data = lz4::block::compress(&data, None, true)?;
-        //     }
-        // }
-
-        // Ok(entity_data)
     }
 }

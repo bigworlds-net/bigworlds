@@ -8,11 +8,11 @@ use futures::TryFutureExt;
 use tokio::sync::oneshot;
 
 use crate::executor::LocalExec;
-use crate::executor::Signal;
 use crate::model;
 use crate::model::behavior::Behavior as BehaviorModel;
 use crate::model::behavior::InstancingTarget;
 use crate::rpc;
+use crate::rpc::Signal;
 use crate::worker::part::Partition;
 use crate::CompName;
 use crate::EntityName;

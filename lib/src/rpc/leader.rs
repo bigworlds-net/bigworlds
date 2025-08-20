@@ -1,11 +1,11 @@
 use fnv::FnvHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::leader::Status;
 use crate::net::CompositeAddress;
 use crate::worker::WorkerId;
-use crate::{EntityName, Error, Model, PrefabName, Result};
+use crate::{EntityName, Error, Model, PrefabName, Result, Signal, Snapshot};
 
 use super::worker;
 
@@ -71,7 +71,7 @@ pub enum Request {
     /// Request a list of all currently connected workers.
     GetWorkers,
     /// Request the complete model from leader.
-    Model,
+    GetModel,
 
     ReadyUntil(usize),
 
@@ -99,13 +99,20 @@ pub enum Request {
     ///
     /// This can be used by workers that are only connected to the leader
     /// and not directly to other workers.
-    WorkerProxy(super::worker::Request),
+    WorkerProxy(Box<super::worker::Request>),
 
     /// Request the leader to calculate migration tresholds and potentially
     /// migrate entities.
     ReorganizeEntities {
         shuffle: bool,
     },
+    LoadSnapshot(Snapshot),
+}
+
+impl Request {
+    pub fn into_local(self) -> RequestLocal {
+        RequestLocal::Request(self)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, strum::Display)]
@@ -128,12 +135,23 @@ pub enum Response {
     GetWorkers(FnvHashMap<WorkerId, Vec<CompositeAddress>>),
     Model(Model),
 
-    ReplaceModel,
-
     StepUntil,
 
     // Broadcast(super::worker::Response),
     WorkerProxy(super::worker::Response),
+}
+
+impl Response {
+    pub fn empty(self) -> Result<()> {
+        match self {
+            Self::Empty => Ok(()),
+            _ => Err(Error::UnexpectedResponse(format!("{:?}", self))),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.empty().is_ok()
+    }
 }
 
 impl TryInto<Model> for Response {

@@ -164,18 +164,19 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                 // `lib` path and load that.
                 // TODO: handle unsuccessful builds.
                 // TODO: improve on the build output.
-                println!("building {}", i.path);
+                info!("building dynlib from path: {}", i.path);
                 let output = std::process::Command::new("cargo")
+                    .env("CARGO_TERM_PROGRESS_WHEN", "always")
+                    .env("CARGO_TERM_PROGRESS_WIDTH", "100")
                     .arg("build")
+                    .arg("--quiet")
                     .arg("--release")
                     .arg("--manifest-path")
                     .arg(format!("{}/Cargo.toml", i.path))
-                    .output()?;
-                println!("{:?}", output);
-                println!("done!");
+                    .status()?;
+                info!("build output: {:?}, artifact: {}", output, i.lib);
 
                 let mut artifact = Vec::new();
-                println!("behavior: dynlib: lib: {}", i.lib);
                 std::fs::File::open(i.lib)?.read_to_end(&mut artifact)?;
 
                 BehaviorInner::Dynlib {
@@ -203,7 +204,7 @@ impl TryFrom<intermediate::Behavior> for Behavior {
 
                 // If the path field points to a script file, check if the file
                 // extension can give us the type of behavior.
-                println!("source path: {}", i.path);
+                // println!("source path: {}", i.path);
 
                 if i.path.contains(".lua") {
                     #[cfg(feature = "behavior_lua")]
@@ -214,9 +215,9 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                                 synced: i.synced,
                             }
                         } else {
-                            println!("lua script path: {}", i.path);
+                            // println!("lua script path: {}", i.path);
                             let script = crate::util::read_file(&i.path)?;
-                            println!("read lua script OK");
+                            // println!("read lua script OK");
                             BehaviorInner::Lua {
                                 script,
                                 synced: i.synced,

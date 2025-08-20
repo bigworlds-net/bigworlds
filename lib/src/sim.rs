@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -12,16 +13,15 @@ use uuid::Uuid;
 use crate::behavior::BehaviorTarget;
 use crate::client::{self, AsyncClient};
 use crate::entity::Entity;
-use crate::executor::{Executor, ExecutorMulti, LocalExec, Signal};
+use crate::executor::{Executor, ExecutorMulti, LocalExec};
 use crate::net::CompositeAddress;
 use crate::rpc::msg::{
     self, AdvanceRequest, Message, RegisterClientRequest, RegisterClientResponse,
 };
-use crate::rpc::worker::RequestLocal;
 use crate::snapshot::Snapshot;
 use crate::{behavior, query, Query};
 use crate::{
-    leader, rpc, server, worker, Address, EntityId, EntityName, Error, Model, Result, Var,
+    leader, rpc, server, worker, Address, EntityId, EntityName, Error, Model, Result, Signal, Var,
 };
 use crate::{EventName, PrefabName};
 
@@ -177,7 +177,7 @@ pub async fn spawn_from(
 
 /// Convenience function for spawning simulation from provided path to model
 /// and optionally applying scenario selected by name.
-pub async fn spawn_from_path(
+pub async fn spawn_from_model_at(
     model_path: PathBuf,
     scenario: Option<&str>,
     config: SimConfig,
@@ -185,25 +185,49 @@ pub async fn spawn_from_path(
 ) -> Result<SimHandle> {
     // TODO: move the path handling business to `Model::from_path` or similar.
     let current_path = std::env::current_dir().expect("failed getting current dir path");
-    let path_buf = PathBuf::from(model_path);
-    let path_to_model = current_path.join(path_buf);
-    let model = Model::from_files(&vfs::PhysicalFS::new(path_to_model), None)?;
+    let full_model_path = current_path.join(model_path);
+    let model = Model::from_files(&vfs::PhysicalFS::new(full_model_path), None)?;
 
     spawn_from(model, scenario, config, cancel).await
+}
+
+/// Spawns a new local simulation instance using a snapshot object.
+pub async fn spawn_from_snapshot(
+    snapshot: Snapshot,
+    config: SimConfig,
+    cancel: CancellationToken,
+) -> Result<SimHandle> {
+    let sim = spawn_with(config, cancel).await?;
+    sim.load_snapshot(snapshot).await?;
+
+    Ok(sim)
+}
+
+/// Convenience function for spawning simulation from provided path to
+/// snapshot.
+pub async fn spawn_from_snapshot_at(
+    snapshot_path: PathBuf,
+    config: SimConfig,
+    cancel: CancellationToken,
+) -> Result<SimHandle> {
+    let mut file = std::fs::File::open(snapshot_path)?;
+    let mut bytes = vec![];
+    file.read_to_end(&mut bytes)?;
+    let snapshot = Snapshot::try_from(&bytes)?;
+
+    spawn_from_snapshot(snapshot, config, cancel).await
 }
 
 /// Local simulation instance handle.
 #[derive(Clone)]
 pub struct SimHandle {
+    config: SimConfig,
+
     pub workers: FnvHashMap<Uuid, worker::Handle>,
-
     pub leader: leader::Handle,
-
     pub server: Option<server::Handle>,
 
     pub cancel: CancellationToken,
-
-    config: SimConfig,
 }
 
 impl SimHandle {
@@ -251,7 +275,7 @@ impl SimHandle {
                 ))
                 .await??
                 .discard_context()
-                .ok()?;
+                .empty()?;
         }
 
         // TODO: send config to leader.
@@ -385,9 +409,7 @@ impl SimHandle {
     pub async fn step(&mut self) -> Result<()> {
         self.leader
             .ctl
-            .execute(Signal::from(rpc::leader::RequestLocal::Request(
-                rpc::leader::Request::Step,
-            )))
+            .execute(Signal::from(rpc::leader::Request::Step.into_local()))
             .await??;
 
         Ok(())
@@ -455,12 +477,10 @@ impl SimHandle {
 
     /// Propagates the provided model to cluster participants.
     pub async fn pull_model(&self, model: Model) -> Result<()> {
-        use rpc::leader::{Request, RequestLocal, Response};
+        use rpc::leader::{Request, Response};
         self.leader
             .ctl
-            .execute(Signal::from(RequestLocal::Request(Request::ReplaceModel(
-                model,
-            ))))
+            .execute(Signal::from(Request::ReplaceModel(model).into_local()))
             .await?
             .map(|_| ())
     }
@@ -476,13 +496,11 @@ impl SimHandle {
     /// Scenario is effectively a set of additional initialization rules
     /// defined at the model level.
     pub async fn initialize_with_scenario(&self, scenario: Option<String>) -> Result<()> {
-        use rpc::leader::{Request, RequestLocal, Response};
+        use rpc::leader::{Request, Response};
 
         self.leader
             .ctl
-            .execute(Signal::from(RequestLocal::Request(Request::Initialize {
-                scenario,
-            })))
+            .execute(Signal::from(Request::Initialize { scenario }.into_local()))
             .await?
             .map(|_| ())
     }
@@ -492,15 +510,27 @@ impl SimHandle {
     /// This operation differs from regular initialization, in that there's
     /// not only the model data, but also the actual entity state data that
     /// needs to be spread across cluster participants.
-    pub async fn load_snapshot(&self, path: String) -> Result<()> {
-        unimplemented!()
+    pub async fn load_snapshot(&self, snapshot: Snapshot) -> Result<()> {
+        self.leader
+            .ctl
+            .execute(Signal::from(
+                rpc::leader::Request::LoadSnapshot(snapshot).into_local(),
+            ))
+            .await??
+            .discard_context()
+            .empty()?;
+        Ok(())
     }
 
     /// Spawns an entity.
     pub async fn spawn_entity(&self, name: EntityName, prefab: Option<PrefabName>) -> Result<()> {
-        let req: rpc::leader::RequestLocal =
-            rpc::leader::Request::SpawnEntity { name, prefab }.into();
-        let resp = self.leader.ctl.execute(Signal::from(req)).await??;
+        let resp = self
+            .leader
+            .ctl
+            .execute(Signal::from(
+                rpc::leader::Request::SpawnEntity { name, prefab }.into_local(),
+            ))
+            .await??;
         match resp.discard_context() {
             rpc::leader::Response::Empty => Ok(()),
             resp => Err(Error::UnexpectedResponse(format!("{resp}"))),
@@ -511,11 +541,11 @@ impl SimHandle {
     pub async fn spawn_entities(&self, prefab: Option<PrefabName>, count: usize) -> Result<()> {
         for n in 0..count {
             let ctl = self.leader.ctl.clone();
-            let req: rpc::leader::RequestLocal = rpc::leader::Request::SpawnEntity {
+            let req = rpc::leader::Request::SpawnEntity {
                 name: Uuid::new_v4().simple().to_string(),
                 prefab: prefab.clone(),
             }
-            .into();
+            .into_local();
             tokio::spawn(async move {
                 let resp = ctl.execute(Signal::from(req)).await??;
                 match resp.discard_context() {
@@ -533,11 +563,12 @@ impl SimHandle {
         let sig = self
             .leader
             .ctl
-            .execute(Signal::from(rpc::leader::RequestLocal::Request(
+            .execute(Signal::from(
                 rpc::leader::Request::RemoveEntity {
                     name: name.to_owned(),
-                },
-            )))
+                }
+                .into_local(),
+            ))
             .await??;
         match sig {
             Signal {
@@ -553,9 +584,7 @@ impl SimHandle {
         Ok(self
             .leader
             .ctl
-            .execute(Signal::from(rpc::leader::RequestLocal::Request(
-                rpc::leader::Request::Model,
-            )))
+            .execute(Signal::from(rpc::leader::Request::GetModel.into_local()))
             .await??
             .discard_context()
             .try_into()?)
@@ -678,7 +707,7 @@ impl SimHandle {
         let entities = Default::default();
 
         let snap = Snapshot {
-            created_at: chrono::Utc::now().timestamp() as u64,
+            created_at: chrono::Utc::now().timestamp() as u32,
             // TODO: count all the workers, also the ones that connected from
             // the outside and don't reside within the same process.
             worker_count: self.workers.len() as u32,
@@ -804,7 +833,10 @@ impl AsyncClient for SimClient {
         if let Some(server) = &self.0.server {
             server
                 .client
-                .execute((None, Message::UnsubscribeRequest(subscription_id)))
+                .execute((
+                    Some(Uuid::nil()),
+                    Message::UnsubscribeRequest(subscription_id),
+                ))
                 .await?
                 .ok()
         } else {

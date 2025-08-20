@@ -4,6 +4,6 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct RemoteNode {
+pub struct OtherNode {
     pub exec: RemoteExec<Request, Result<Response>>,
 }

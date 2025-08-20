@@ -13,13 +13,19 @@ use crate::{
 #[derive(Clone)]
 pub struct Handle {
     /// Controller executor, allowing control over the worker task.
+    ///
+    /// Importantly, auth and permission rules don't apply to this execution
+    /// channel.
     pub ctl: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
-
-    /// Server executor for running requests coming from a local server.
-    pub server_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
 
     /// Executor for running requests coming from a local leader.
     pub leader_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
+
+    /// Executor for running requests coming from local workers.
+    pub other_worker_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
+
+    /// Server executor for running requests coming from a local server.
+    pub server_exec: LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
 
     pub behavior_exec: LocalExec<Signal<Request>, Result<Signal<Response>>>,
     pub behavior_broadcast: tokio::sync::broadcast::Sender<rpc::behavior::Request>,
@@ -61,9 +67,12 @@ impl Handle {
     }
 
     /// Connect the worker to another worker running on the same runtime.
-    pub async fn connect_to_local_worker(&self, worker_handle: &Handle) -> Result<()> {
+    pub async fn connect_to_local_worker(&self, handle: &Handle) -> Result<()> {
         self.ctl
-            .execute(Signal::from(RequestLocal::ConnectToWorker()))
+            .execute(Signal::from(RequestLocal::ConnectToWorker(
+                handle.other_worker_exec.clone(),
+                self.other_worker_exec.clone(),
+            )))
             .await??;
 
         Ok(())

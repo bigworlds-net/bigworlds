@@ -333,17 +333,8 @@ pub async fn start(
                                 let snapshot = client.snapshot().await?;
                                 tokio::fs::File::create_new(args)
                                     .await?
-                                    .write_all(&snapshot.to_bytes(true, false)?)
+                                    .write_all(&snapshot.to_bytes(false, true)?)
                                     .await?;
-                            }
-                            // Write a compressed snapshot to disk.
-                            "snapc" => {
-                                if args.contains(" ") {
-                                    println!("Snapshot file path cannot contain spaces.");
-                                    continue;
-                                }
-
-                                unimplemented!();
                             }
                             // Initialize the cluster with default model.
                             "init" => {

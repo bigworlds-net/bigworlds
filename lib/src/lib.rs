@@ -38,9 +38,10 @@ mod snapshot;
 
 pub use address::Address;
 pub use error::{Error, Result};
-pub use executor::{Executor, ExecutorMulti, LocalExec, RemoteExec, Signal};
+pub use executor::{Executor, ExecutorMulti, LocalExec, RemoteExec};
 pub use model::Model;
 pub use query::{Query, QueryProduct};
+pub use rpc::{Caller, Context, Participant, Signal};
 pub use server::Config as ServerConfig;
 pub use sim::SimHandle;
 pub use snapshot::Snapshot;

@@ -15,27 +15,27 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::Utc;
+use fnv::FnvHashMap;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
-use tokio_stream::StreamExt;
-
-use fnv::FnvHashMap;
+use tokio_stream::{StreamExt, StreamMap};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::behavior::BehaviorTarget;
 use crate::error::Error;
-use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
+use crate::executor::{Executor, LocalExec, RemoteExec};
 use crate::leader::{LeaderExec, LeaderRemoteExec};
 use crate::model::behavior::BehaviorInner;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding};
 use crate::query::{self, Trigger};
 use crate::rpc::worker::{Request, RequestLocal, Response};
-use crate::rpc::Participant;
+use crate::rpc::{Participant, Signal, SignalId};
 use crate::server::{ServerExec, ServerId};
 use crate::util::{decode, encode};
 use crate::worker::manager::ManagerExec;
-use crate::{behavior, leader, net, rpc, Model, Query, QueryProduct, Result};
+use crate::worker::pov::WorkerSituation;
+use crate::{behavior, leader, net, rpc, Context, Model, Query, QueryProduct, Result};
 
 use part::Partition;
 use pov::{Leader, LeaderSituation, OtherWorker, Server};
@@ -51,17 +51,27 @@ pub struct Subscription {
     pub sender: mpsc::Sender<Result<Signal<Response>>>,
 }
 
+/// Worker state.
+///
+/// Normally stored as part of the manager task, accessed via a channel.
 pub struct State {
     /// Integer identifier unique across the cluster.
     pub id: WorkerId,
 
-    /// Worker configuration.
+    /// Worker configuration. Can be changed at runtime.
+    ///
+    /// NOTE: some config items are used exclusively for setup, meaning runtime
+    /// config change won't affect them.
     pub config: Config,
 
     /// List of addresses that can be used to contact this worker.
     pub listeners: Vec<CompositeAddress>,
 
-    /// Simulation model kept up to date with leader.
+    /// Simulation model kept in sync with leader.
+    ///
+    /// `None` means the worker was not yet initialized. As part of normal
+    /// operations we start with uninitialized workers forming a cluster, only
+    /// then to be presented with a model to pull.
     pub model: Option<Model>,
 
     /// Worker-held part of the simulation.
@@ -81,17 +91,37 @@ pub struct State {
     /// to be spawned on the runtime. Nodes have a mechanism for collectively
     /// choosing one of them to spawn a leader.
     // TODO: document leader election mechanism.
-    pub leader: LeaderSituation,
+    pub leader: Leader,
 
+    /// List of servers connected to this worker.
     pub servers: FnvHashMap<ServerId, Server>,
 
     /// Other workers from the same cluster as seen by this worker.
     pub other_workers: FnvHashMap<WorkerId, OtherWorker>,
 
+    /// Watch channel marking worker as blocked due to any of the connected
+    /// servers' clients being blocked.
     pub blocked_watch: (watch::Sender<bool>, watch::Receiver<bool>),
-    pub clock_watch: (watch::Sender<usize>, watch::Receiver<usize>),
+    /// Watch channel storing current clock value.
+    pub clock_watch: (watch::Sender<u64>, watch::Receiver<u64>),
 
+    /// All subscriptions registered with this worker.
+    ///
+    /// Although subscriptions are registered per single worker, the
+    /// query involved can perfectly well be global, necessitating broadcasting
+    /// through the wider cluster network.
     pub subscriptions: Vec<Subscription>,
+
+    /// Records of recently registered signals matched with signal arrival
+    /// timestamp.
+    ///
+    /// This information is crucial in case of signal broadcast accross cluster
+    /// participants. By storing recent signals we can make sure to only
+    /// process any given signal once, even if we receive it multiple times
+    /// from different connected participants.
+    // TODO: consider storing additional information about the signal as part
+    // of cluster intelligence for further optimization.
+    pub recent_signals: FnvHashMap<SignalId, u64>,
 }
 
 /// Creates a new `Worker` task on the current runtime.
@@ -136,15 +166,30 @@ pub struct State {
 pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     let cancel = cancel.child_token();
 
-    let (local_ctl_executor, mut local_ctl_stream, _) =
-        LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
-    let (local_leader_executor, mut local_leader_stream, _) =
-        LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
+    type LocalExecLocal = LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>;
+
+    let (local_ctl_executor, local_ctl_stream, local_ctl_stream_multi) = LocalExecLocal::new(10);
+    let (local_leader_executor, local_leader_stream, local_leader_stream_multi) =
+        LocalExecLocal::new(10);
+    let (local_other_worker_executor, local_other_worker_stream, local_other_worker_stream_multi) =
+        LocalExecLocal::new(10);
+    let (local_server_executor, local_server_stream, local_server_stream_multi) =
+        LocalExecLocal::new(10);
+    let mut local_streams = StreamMap::new();
+    local_streams.insert("ctl", local_ctl_stream);
+    local_streams.insert("leader", local_leader_stream);
+    local_streams.insert("worker", local_other_worker_stream);
+    local_streams.insert("server", local_server_stream);
+    let mut local_streams_multi = StreamMap::new();
+    local_streams_multi.insert("ctl", local_ctl_stream_multi);
+    local_streams_multi.insert("leader", local_leader_stream_multi);
+    local_streams_multi.insert("worker", local_other_worker_stream_multi);
+    local_streams_multi.insert("server", local_server_stream_multi);
+
     let (local_behavior_executor, mut local_behavior_stream, mut local_behavior_stream_multi) =
-        LocalExec::<Signal<Request>, Result<Signal<Response>>>::new(20);
-    let (local_server_executor, mut local_server_stream, mut local_server_stream_multi) =
-        LocalExec::<Signal<RequestLocal>, Result<Signal<Response>>>::new(20);
-    let (net_executor, mut net_stream, _) = LocalExec::new(20);
+        LocalExec::<Signal<Request>, Result<Signal<Response>>>::new(10);
+
+    let (net_executor, mut net_stream, _) = LocalExec::new(10);
     net::spawn_listeners(&config.listeners, net_executor.clone(), cancel.clone())?;
 
     debug!("spawning worker task, listeners: {:?}", config.listeners);
@@ -163,87 +208,61 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
             id,
         )?),
         config,
-        leader: LeaderSituation::Never,
+        leader: Leader::default(),
         other_workers: FnvHashMap::default(),
         servers: FnvHashMap::default(),
         blocked_watch: blocked,
         clock_watch: clock,
         model: None,
         subscriptions: vec![],
+        recent_signals: FnvHashMap::default(),
     };
 
     // Clone the behavior broadcast channel.
     let behavior_broadcast = state.part.as_ref().unwrap().behavior_broadcast.0.clone();
 
-    // Worker state is held by a dedicated manager task.
+    // Spawn a dedicated manager task that holds worker state and dispenses it
+    // to request handlers via message passing.
     let manager = manager::spawn(state, cancel.clone())?;
 
     let local_leader_executor_c = local_leader_executor.clone();
     let local_behavior_executor_c = local_behavior_executor.clone();
-
     let cancel_ = cancel.clone();
     let manager_ = manager.clone();
     tokio::spawn(async move {
         loop {
-            // debug!("worker loop start");
+            let worker = manager_.clone();
+            let local_behavior_executor = local_behavior_executor_c.clone();
+            let net_exec = net_executor.clone();
+            let cancel = cancel_.clone();
+
             tokio::select! {
-                Some((sig, s)) = local_ctl_stream.next() => {
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
+                Some((source, (sig, sender))) = local_streams.next() => {
                     tokio::spawn(async move {
-                        debug!("worker: processing controller message");
-                        let resp = handle_local_request(sig.payload, sig.ctx, worker, local_behavior_executor, net_exec, None, cancel).await;
-                        s.send(resp);
+                        debug!("worker: processing local signal from `{}`: request: {}, ctx: {:?}", source, sig.payload, sig.ctx);
+                        let ctx = sig.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                        let resp = handle_local_request(sig.payload, ctx, worker, local_behavior_executor, net_exec, None, cancel).await;
+                        let resp = resp.map(|mut r| {
+                            r.ctx = r.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                            r
+                        });
+                        sender.send(resp);
                     });
                 },
-                Some((sig, s)) = local_server_stream.next() => {
-                    debug!("worker: processing message from local server");
-
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
+                Some((source, (sig, sender))) = local_streams_multi.next() => {
                     tokio::spawn(async move {
-                        // let resp = handle_local_server_request(req, server_id, worker).await;
-                        let resp = handle_local_request(sig.payload, sig.ctx, worker, local_behavior_executor, net_exec, None, cancel).await;
-                        s.send(resp);
+                        println!("worker: processing local signal (multi response) from `{}`: request: {}, ctx: {:?}", source, sig.payload, sig.ctx);
+                        let ctx = sig.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                        let resp = handle_local_request(sig.payload, ctx, worker, local_behavior_executor, net_exec, Some(sender.clone()), cancel).await;
+                        let resp = resp.map(|mut r| {
+                            r.ctx = r.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                            r
+                        });
+                        println!("worker: sending resp: {:?}", resp);
+                        sender.send(resp).await;
                     });
-
                 },
-                Some((sig, s)) = local_server_stream_multi.next() => {
-                    debug!("worker: processing message from local server (multi)");
-
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
-                    tokio::spawn(async move {
-                        let resp = handle_local_request(sig.payload, sig.ctx, worker, local_behavior_executor, net_exec, Some(s.clone()), cancel).await;
-                        s.send(resp).await.unwrap();
-                    });
-
-                },
-                Some((sig, s)) = local_leader_stream.next() => {
-                    use {Response, RequestLocal};
-                    // worker receives leader executor channel
-                    debug!("worker: processing message from local leader");
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
-                    tokio::spawn(async move {
-                        let resp = handle_local_request(sig.payload, sig.ctx, worker, local_behavior_executor, net_exec, None, cancel).await;
-                        s.send(resp);
-                    });
-
-                }
-                Some((sig, s)) = local_behavior_stream.next() => {
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
+                Some((sig, sender)) = local_behavior_stream.next() => {
                     tokio::spawn(async move {
                         let resp = handle_request(
                             sig.payload,
@@ -254,14 +273,10 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                             None,
                             cancel
                         ).await;
-                        s.send(resp);
+                        sender.send(resp);
                     });
                 },
                 Some((sig, s)) = local_behavior_stream_multi.next() => {
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
                     tokio::spawn(async move {
                         let resp = handle_request(
                             sig.payload,
@@ -272,16 +287,10 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                             Some(s.clone()),
                             cancel
                         ).await;
-                        s.send(resp);
+                        s.send(resp).await;
                     });
                 },
                 Some(((maybe_con, req), s)) = net_stream.next() => {
-                    trace!("worker: processing network message");
-
-                    let worker = manager_.clone();
-                    let local_behavior_executor = local_behavior_executor_c.clone();
-                    let net_exec = net_executor.clone();
-                    let cancel = cancel_.clone();
                     tokio::spawn(async move {
                         let sig: Signal<Request> = match decode(&req, Encoding::Bincode) {
                             Ok(r) => r,
@@ -290,10 +299,12 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                 return;
                             }
                         };
+                        debug!("worker: processing network signal from {}: request: {}, ctx: {:?}", maybe_con, sig.payload, sig.ctx);
                         let resp = handle_net_request(sig.payload, sig.ctx, worker.clone(), maybe_con, local_behavior_executor, net_exec, cancel).await;
                         s.send(encode(resp, Encoding::Bincode).unwrap()).unwrap();
                     });
                 },
+                // TODO: multi-response net stream.
                 _ = cancel_.cancelled() => {
                     debug!("worker[{}]: shutting down", id);
                     break;
@@ -310,14 +321,14 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(1000)) => {
-                    let leader = manager.get_leader().await.unwrap();
-                    match leader {
-                        LeaderSituation::Election | LeaderSituation::OrphanedWaiting | LeaderSituation::Never => continue,
+                    let mut leader = manager.get_leader().await.unwrap();
+                    match leader.situation {
+                        LeaderSituation::Election | LeaderSituation::OrphanedWaiting | LeaderSituation::Unaware => continue,
                         _ => (),
                     }
                     // println!("worker: manager: leader connected, checking if alive");
-                    if let LeaderSituation::Connected(leader) = &leader {
-                        if let Ok(_) = leader.execute(Signal::from(rpc::leader::Request::Status)).await {
+                    if let LeaderSituation::Connected(leader_exec) = &leader.situation {
+                        if let Ok(_) = leader_exec.execute(Signal::from(rpc::leader::Request::Status)).await {
                             continue;
                         } else {
                             let old_leader_addrs = leader.listeners.clone();
@@ -332,8 +343,9 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                     "worker[{}]: worker orphaned, no remote workers known",
                                     worker_id
                                 );
+                                leader.situation = LeaderSituation::OrphanedWaiting;
                                 manager
-                                    .set_leader(LeaderSituation::OrphanedWaiting)
+                                    .set_leader(leader)
                                     .await
                                     .unwrap();
 
@@ -368,7 +380,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                     }
 
                                     // Check if the leader situation has changed.
-                                    match manager.get_leader().await.unwrap() {
+                                    match manager.get_leader().await.unwrap().situation {
                                         LeaderSituation::Election | LeaderSituation::Connected(_) => return,
                                         _ => {
                                             match manager.get_config().await {
@@ -411,7 +423,10 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                 // a new leader.
 
                                 // Update the leader situation for this worker.
-                                manager.set_leader(LeaderSituation::Election).await.unwrap();
+                                manager.set_leader(Leader {
+                                    situation: LeaderSituation::Election,
+                                    ..leader}
+                                 ).await.unwrap();
 
                                 // TODO: call the local node. Ask for it's
                                 // status/stats.
@@ -429,9 +444,9 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
 
                                     println!("worker[{}]: sending election request to {}", worker_id, id);
                                     if let Ok(resp) =
-                                        other_worker.execute(Request::Election { sender_id: worker_id }).await
+                                        other_worker.execute(Signal::from(Request::Election { sender_id: worker_id }).originating_at(Participant::Worker(worker_id).into())).await
                                     {
-                                        if let Response::Empty = resp {
+                                        if let Response::Empty = resp.discard_context() {
                                             //
                                         } else {
                                             unimplemented!()
@@ -454,9 +469,10 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     });
 
     Ok(Handle {
-        server_exec: local_server_executor,
         ctl: local_ctl_executor,
         leader_exec: local_leader_executor,
+        other_worker_exec: local_other_worker_executor,
+        server_exec: local_server_executor,
         behavior_exec: local_behavior_executor,
         behavior_broadcast,
     })
@@ -486,13 +502,10 @@ async fn handle_local_request(
                 .await??;
 
             let worker_leader = Leader {
-                exec: LeaderExec::Local(_worker_leader),
-                worker_id: my_id,
+                situation: LeaderSituation::Connected(LeaderExec::Local(_worker_leader)),
                 listeners: vec![],
             };
-            manager
-                .set_leader(LeaderSituation::Connected(worker_leader))
-                .await?;
+            manager.set_leader(worker_leader).await?;
 
             Ok(Signal::new(
                 Response::ConnectToLeader { worker_id: my_id },
@@ -500,26 +513,25 @@ async fn handle_local_request(
             ))
         }
         RequestLocal::IntroduceLeader(exec) => {
-            log::debug!("worker connecting to leader...");
+            log::debug!("leader being introduced to worker");
 
             let my_id = manager.get_id().await?;
             let exec = LeaderExec::Local(exec);
 
-            match manager.get_leader().await? {
+            match manager.get_leader().await?.situation {
                 LeaderSituation::Connected(_) => {
-                    log::debug!("worker already aware of a leader");
+                    log::warn!("worker already has direct connection to leader");
                 }
                 _ => {
-                    let leader = LeaderSituation::Connected(Leader {
-                        exec,
-                        worker_id: my_id,
-                        listeners: vec![],
-                    });
+                    let leader = Leader {
+                        situation: LeaderSituation::Connected(exec),
+                        ..Default::default()
+                    };
                     manager.set_leader(leader).await;
                 }
             };
 
-            log::debug!("worker successfuly connected to leader");
+            log::debug!("leader successfuly introduced to worker");
 
             Ok(Signal::new(Response::Empty, ctx))
         }
@@ -532,9 +544,9 @@ async fn handle_local_request(
                 .await??;
             if let rpc::server::Response::IntroduceWorker(server_id) = sig.into_payload() {
                 let server = Server {
-                    worker_id: manager.get_id().await?,
-                    server_id,
+                    id: server_id,
                     exec: ServerExec::Local(worker_server),
+                    listeners: vec![],
                 };
                 manager.insert_server(server_id, server).await?;
                 Ok(Signal::new(Response::Empty, ctx))
@@ -544,16 +556,46 @@ async fn handle_local_request(
         }
         RequestLocal::IntroduceServer(server_id, exec) => {
             let server = Server {
-                worker_id: manager.get_id().await?,
-                server_id,
+                id: server_id,
                 exec: ServerExec::Local(exec),
+                listeners: vec![],
             };
 
             manager.insert_server(server_id, server).await?;
 
             Ok(Signal::new(Response::Register { server_id }, ctx))
         }
-        RequestLocal::ConnectToWorker() => todo!(),
+        RequestLocal::ConnectToWorker(outgoing, incoming) => {
+            let my_id = manager.get_id().await?;
+            let ctx = ctx.map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+
+            let sig = outgoing
+                .execute(Signal::new(
+                    RequestLocal::IntroduceWorker(my_id, incoming),
+                    ctx,
+                ))
+                .await??;
+            let _ = sig.payload.empty()?;
+
+            let ctx = sig
+                .ctx
+                .map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+
+            Ok(Signal::new(Response::Empty, ctx))
+        }
+        RequestLocal::IntroduceWorker(id, incoming) => {
+            let my_id = manager.get_id().await?;
+            let ctx = ctx.map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+
+            let worker = OtherWorker {
+                id,
+                situation: WorkerSituation::Connected(WorkerExec::Local(incoming)),
+                listeners: vec![],
+            };
+            manager.add_other_worker(worker).await?;
+
+            Ok(Signal::new(Response::Empty, ctx))
+        }
         RequestLocal::AddBehavior(target, handle) => {
             manager.add_behavior(target, handle).await?;
             Ok(Signal::new(Response::Empty, ctx))
@@ -587,9 +629,11 @@ async fn handle_net_request(
                     // via quic
                     manager
                         .add_other_worker(OtherWorker {
-                            local_id: manager.get_id().await?,
                             id,
-                            exec: WorkerExec::Remote(RemoteExec::new(con)),
+                            situation: WorkerSituation::Connected(WorkerExec::Remote(
+                                RemoteExec::new(con),
+                            )),
+                            listeners: vec![],
                         })
                         .await?;
                 }
@@ -627,9 +671,9 @@ async fn handle_net_request(
                     let exec = WorkerExec::Remote(RemoteExec::new(connection));
                     manager
                         .add_other_worker(OtherWorker {
-                            local_id: my_id,
                             id,
-                            exec,
+                            situation: WorkerSituation::Connected(exec),
+                            listeners: vec![],
                         })
                         .await?;
                     println!("added remote worker to worker");
@@ -637,11 +681,10 @@ async fn handle_net_request(
             }
 
             manager
-                .set_leader(LeaderSituation::Connected(Leader {
-                    exec,
-                    worker_id: my_id,
-                    listeners,
-                }))
+                .set_leader(Leader {
+                    situation: LeaderSituation::Connected(exec),
+                    ..Default::default()
+                })
                 .await?;
             Ok(Signal::new(
                 Response::IntroduceLeader { worker_id: my_id },
@@ -654,11 +697,12 @@ async fn handle_net_request(
                 ConnectionOrAddress::Connection(con) => {
                     // Re-use the connection if the request was transported
                     // via quic.
+                    let exec = WorkerExec::Remote(RemoteExec::new(con));
                     manager
                         .add_other_worker(OtherWorker {
-                            local_id: manager.get_id().await?,
                             id: sender_id,
-                            exec: WorkerExec::Remote(RemoteExec::new(con)),
+                            situation: WorkerSituation::Connected(exec),
+                            listeners: vec![],
                         })
                         .await?;
                 }
@@ -677,7 +721,7 @@ async fn handle_net_request(
             // Step-up from an orphaned status to in-progress election, as the
             // worker is now connected to at least one other worker from the
             // previously established cluster.
-            manager.set_leader(LeaderSituation::Election).await?;
+            manager.set_leader(LeaderSituation::Election.into()).await?;
 
             Ok(Signal::new(Response::Empty, ctx))
         }
@@ -730,11 +774,7 @@ async fn handle_request(
             if let rpc::leader::Response::Model(model) = resp {
                 // Store the leader executor so that we can send data to the leader
                 manager
-                    .set_leader(LeaderSituation::Connected(Leader {
-                        exec: LeaderExec::Remote(remote_exec),
-                        worker_id: my_id,
-                        listeners: vec![address],
-                    }))
+                    .set_leader(LeaderSituation::Connected(LeaderExec::Remote(remote_exec)).into())
                     .await?;
 
                 // If the leader was already initialized with a model, then we get
@@ -748,11 +788,7 @@ async fn handle_request(
             else if let rpc::leader::Response::Empty = resp {
                 // Store the leader executor so that we can send data to the leader
                 manager
-                    .set_leader(LeaderSituation::Connected(Leader {
-                        exec: LeaderExec::Remote(remote_exec),
-                        worker_id: my_id,
-                        listeners: vec![address],
-                    }))
+                    .set_leader(LeaderSituation::Connected(LeaderExec::Remote(remote_exec)).into())
                     .await?;
             } else {
                 unimplemented!("unexpected response: {:?}", resp);
@@ -869,18 +905,22 @@ async fn handle_request(
 
             // Process step-trigered subscriptions.
             let subs = manager.get_subscriptions().await?;
+            let mut ctx = ctx.unwrap_or(Context::new(
+                Participant::Worker(manager.get_id().await?).into(),
+            ));
             for sub in subs {
                 if !sub.triggers.contains(&Trigger::StepEvent) {
                     continue;
                 }
-                let product = manager.process_query(sub.query).await?;
+                let product = process_query(sub.query, manager.clone(), &mut ctx).await?;
+                // let product = manager.process_query(sub.query).await?;
                 sub.sender
                     .send(Ok(Signal::from(Response::Query(product))))
                     .await;
             }
 
             trace!("worker processed step");
-            Ok(Signal::new(Response::Step, ctx))
+            Ok(Signal::new(Response::Step, Some(ctx)))
         }
         Request::Initialize => {
             trace!(">>> worker: initializing");
@@ -893,9 +933,9 @@ async fn handle_request(
         }
         Request::GetModel => {
             let leader = manager.get_leader().await?;
-            if let LeaderSituation::Connected(leader) = leader {
+            if let LeaderSituation::Connected(leader) = leader.situation {
                 match leader
-                    .execute(Signal::new(rpc::leader::Request::Model, ctx.clone()))
+                    .execute(Signal::new(rpc::leader::Request::GetModel, ctx.clone()))
                     .await?
                     .into_payload()
                 {
@@ -909,20 +949,20 @@ async fn handle_request(
             }
         }
         Request::ReplaceModel(model) => {
-            // Propagate request to leader.
-            let leader = manager.get_leader().await?;
-            if let LeaderSituation::Connected(leader) = leader {
-                let sig = leader
-                    .execute(Signal::new(rpc::leader::Request::ReplaceModel(model), ctx))
-                    .await?;
-                Ok(Signal::new(Response::PullProject, sig.ctx))
-            } else {
-                Err(Error::LeaderNotConnected(format!("{:?}", leader)))
-            }
+            let my_id = manager.get_id().await?;
+            // Send request to leader.
+            let req = rpc::leader::Request::ReplaceModel(model);
+            let resp = send_to_leader(
+                req,
+                manager,
+                ctx.unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
+            )
+            .await?;
+            Ok(Signal::new(Response::Empty, resp.ctx))
         }
         Request::MergeModel(model) => {
             let leader = manager.get_leader().await?;
-            if let LeaderSituation::Connected(leader) = leader {
+            if let LeaderSituation::Connected(leader) = leader.situation {
                 let sig = leader
                     .execute(Signal::new(rpc::leader::Request::MergeModel(model), ctx))
                     .await?;
@@ -1022,8 +1062,7 @@ async fn handle_request(
         }
         Request::Clock => {
             let leader = manager.get_leader().await?;
-            if let LeaderSituation::Connected(leader) = leader {
-                trace!("worker_id: {:?}", leader.worker_id);
+            if let LeaderSituation::Connected(leader) = leader.situation {
                 let clock = match leader
                     .execute(Signal::from(rpc::leader::Request::Clock))
                     .await?
@@ -1041,6 +1080,7 @@ async fn handle_request(
         Request::Subscribe(trigger, query) => {
             if let Some(multi) = multi {
                 let id = manager.subscribe(trigger, query, multi).await?;
+                println!("worker: handler: returning response subscribe id");
                 Ok(Signal::from(Response::Subscribe(id)))
             } else {
                 Err(Error::Other(
@@ -1109,6 +1149,16 @@ async fn handle_request(
             ))
         }
         Request::Invoke { events, global } => {
+            // TODO!: ponder broadcasting. Generally the problem is that we can
+            // have the signal broadcast reach a single worker multiple times,
+            // with no way of knowing that's the case. One solution would be to
+            // identify each signal with an ID. This way we could make note of
+            // the first notion of a signal and discard incoming attempts at
+            // giving us the same signal to process.
+            //
+            // Global invoke is basically a broadcast, executing a procedure
+            // locally but expanding outwards.
+
             // Global invocation requires broadcasting the request accross the
             // cluster to all the workers.
             if global {
@@ -1229,9 +1279,9 @@ async fn handle_request(
                 _ => unimplemented!(),
             };
             let other_worker = OtherWorker {
-                local_id: my_id,
                 id: worker_id,
-                exec: WorkerExec::Remote(remote_exec),
+                situation: WorkerSituation::Connected(WorkerExec::Remote(remote_exec)),
+                listeners: vec![],
             };
             manager.add_other_worker(other_worker).await?;
 
@@ -1264,8 +1314,8 @@ async fn handle_request(
         Request::GetLeader => {
             let leader = manager.get_leader().await?;
 
-            if let LeaderSituation::Connected(leader) = leader {
-                let leader = match leader.exec {
+            if let LeaderSituation::Connected(leader_exec) = leader.situation {
+                let leader = match leader_exec {
                     LeaderExec::Remote(remote) => Some(remote.remote_address()),
                     // LeaderExec::Remote(remote_exec) => remote_exec.local_ip(),
                     LeaderExec::Local(local_exec) => {
@@ -1332,19 +1382,18 @@ async fn handle_request(
                         // If no remote workers are connected, send through the
                         // leader. The leader will decide where to migrate the
                         // entity based on it's own process.
-                        let leader_sit = manager.get_leader().await?;
-                        if let LeaderSituation::Connected(leader) = leader_sit {
-                            leader
-                                .execute(Signal::new(
-                                    rpc::leader::Request::WorkerProxy(Request::TakeEntity(
-                                        entity_name.clone(),
-                                        entity,
-                                    )),
-                                    ctx.clone().or(Some(rpc::Context::new(
-                                        Participant::Worker(manager.get_id().await?).into(),
-                                    ))),
-                                ))
-                                .await?;
+                        let leader = manager.get_leader().await?;
+                        if let LeaderSituation::Connected(exec) = leader.situation {
+                            exec.execute(Signal::new(
+                                rpc::leader::Request::WorkerProxy(Box::new(Request::TakeEntity(
+                                    entity_name.clone(),
+                                    entity,
+                                ))),
+                                ctx.clone().or(Some(rpc::Context::new(
+                                    Participant::Worker(manager.get_id().await?).into(),
+                                ))),
+                            ))
+                            .await?;
                         }
                     } else {
                         // Choose a particular worker to send the entity to.
@@ -1352,7 +1401,10 @@ async fn handle_request(
                         use rand::{rng, rngs::StdRng, seq::IteratorRandom, SeedableRng};
                         if let Some(worker) = workers.values().choose(&mut StdRng::from_os_rng()) {
                             worker
-                                .execute(Request::TakeEntity(entity_name.clone(), entity))
+                                .execute(Signal::new(
+                                    Request::TakeEntity(entity_name.clone(), entity),
+                                    ctx.clone(),
+                                ))
                                 .await?;
                         }
                     }
@@ -1375,16 +1427,34 @@ async fn handle_request(
             todo!()
         }
         Request::Snapshot => {
-            //
-            Ok(Signal::new(Response::Empty, ctx))
+            let snapshot = manager.snapshot().await?;
+
+            Ok(Signal::new(Response::Snapshot(snapshot), ctx))
+        }
+        Request::LeaderProxy(request) => {
+            let my_id = manager.get_id().await?;
+            let ctx = ctx.map(|c| c.register_hop(Participant::Worker(my_id)));
+            let response = send_to_leader(
+                *request,
+                manager,
+                ctx.unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
+            )
+            .await?;
+            let ctx = response
+                .ctx
+                .map(|c| c.register_hop(Participant::Worker(my_id)));
+            Ok(Signal::new(
+                Response::LeaderProxy(Box::new(response.payload)),
+                ctx,
+            ))
         }
         #[cfg(feature = "machine")]
         Request::MachineLogic { name } => {
             let leader = manager.get_leader().await?;
 
-            let model = if let LeaderSituation::Connected(leader) = leader {
+            let model = if let LeaderSituation::Connected(leader) = leader.situation {
                 match leader
-                    .execute(Signal::new(rpc::leader::Request::Model, ctx.clone()))
+                    .execute(Signal::new(rpc::leader::Request::GetModel, ctx.clone()))
                     .await?
                 {
                     Signal {
@@ -1416,8 +1486,65 @@ async fn handle_request(
     }
 }
 
-/// Broadcasts a request accross all cluster participants.
-async fn broadcast(query: Query, manager: ManagerExec, mut ctx: &mut rpc::Context) -> Result<()> {
+/// Attempts to deliver a request to the cluster leader.
+///
+/// Abstracts over the transport layer, including proxying the request through
+/// cluster participants.
+///
+/// Returns response provided by the leader, if reached.
+async fn send_to_leader(
+    request: rpc::leader::Request,
+    manager: ManagerExec,
+    ctx: rpc::Context,
+) -> Result<Signal<rpc::leader::Response>> {
+    // First determine leader situation.
+    let leader = manager.get_leader().await?;
+
+    match leader.situation {
+        // If there is a direct connection, just use that.
+        LeaderSituation::Connected(exec) => exec.execute(Signal::new(request, Some(ctx))).await,
+        // Otherwise attempt passing the request through connected workers.
+        LeaderSituation::Aware(_) | LeaderSituation::Unaware => {
+            let workers = manager.get_other_workers().await?;
+            // TODO: select outbound worker based on actual measurements,
+            // e.g. total time spent accessing the leader through the same
+            // route previously.
+            if let Some((_, worker)) = workers.iter().next() {
+                let sig = worker
+                    .execute(Signal::new(
+                        Request::LeaderProxy(Box::new(request)),
+                        Some(ctx),
+                    ))
+                    .await?;
+                if let Response::LeaderProxy(response) = sig.payload {
+                    Ok(Signal::new(*response, sig.ctx))
+                } else {
+                    Err(Error::UnexpectedResponse(format!("")))
+                }
+            } else {
+                panic!("worker: other workers' list found empty, should've been catched elsewhere (worker orphaned)");
+            }
+        }
+        // If the leader is not reachable, just return an error.
+        LeaderSituation::Unreachable
+        | LeaderSituation::Election
+        | LeaderSituation::OrphanedWaiting => {
+            // TODO: perhaps consider maintaining a queue. It may be better to
+            // just return an err and call it quits though.
+            Err(Error::LeaderNotConnected(format!("worker: attempted indirect request to leader, but it's currently unreachable or not existent: {:?}", leader)))
+        }
+        _ => unimplemented!(),
+    }
+}
+
+/// Broadcasts a request to all known participants.
+async fn broadcast(
+    request: Request,
+    manager: ManagerExec,
+    mut ctx: &mut rpc::Context,
+) -> Result<()> {
+    let workers = manager.get_other_workers().await?;
+
     Ok(())
 }
 
@@ -1454,14 +1581,17 @@ async fn process_query(
                 // this worker.
                 ctx.hops.push(rpc::NetworkHop {
                     observer: Participant::Worker(manager.get_id().await?).into(),
-                    delta_time_ms: (ctx.initiated_at - Utc::now().timestamp_millis() as u64) as u16,
+                    delta_time_micros: (Utc::now().timestamp_micros() as u64 - ctx.initiated_at)
+                        as u32,
                 });
 
                 let leader = manager.get_leader().await?;
-                if let LeaderSituation::Connected(leader) = leader {
-                    let response = leader
+                if let LeaderSituation::Connected(leader_exec) = leader.situation {
+                    let response = leader_exec
                         .execute(Signal::new(
-                            rpc::leader::Request::WorkerProxy(Request::ProcessQuery(query.clone())),
+                            rpc::leader::Request::WorkerProxy(Box::new(Request::ProcessQuery(
+                                query.clone(),
+                            ))),
                             Some(ctx.clone()),
                         ))
                         .await?;
@@ -1496,14 +1626,20 @@ async fn process_query(
                 println!("worker: query: num of remote workers: {}", workers.len());
                 for (id, worker) in workers {
                     let query = query.clone();
+                    let ctx_ = ctx.clone();
                     set.spawn(async move {
                         worker
-                            .execute(rpc::worker::Request::ProcessQuery(query))
+                            .execute(Signal::new(
+                                rpc::worker::Request::ProcessQuery(query),
+                                Some(ctx_),
+                            ))
                             .await
                     });
                 }
                 while let Some(res) = set.join_next().await {
-                    let response = res.map_err(|e| Error::NetworkError(format!("{e}")))??;
+                    let response = res
+                        .map_err(|e| Error::NetworkError(format!("{e}")))??
+                        .discard_context();
                     match response {
                         Response::Query(_product) => product.merge(_product)?,
                         _ => return Err(Error::UnexpectedResponse(response.to_string())),

@@ -64,10 +64,12 @@ pub fn filter_layer(level: LogLevel) -> EnvFilter {
     let filter_str = match level {
         LogLevel::Error => "warn,hyper=off,rustls=off,tungstenite=off",
         LogLevel::Warn => "warn,rocket::support=info,hyper=off,rustls=off,tungstenite=off",
-        LogLevel::Info => "info,fjall=off,hyper=off,rustls=off,tungstenite=off",
-        LogLevel::Debug => "debug,fjall=off,hyper=info,rustls=off,sled=info,tungstenite=info",
+        LogLevel::Info => "info,fjall=off,lsm_tree=off,hyper=off,rustls=off,tungstenite=off",
+        LogLevel::Debug => {
+            "debug,fjall=off,lsm_tree=off,hyper=info,rustls=off,sled=info,tungstenite=info"
+        }
         LogLevel::Trace => {
-            "trace,fjall=off,hyper=info,rustls=off,sled=info,\
+            "trace,fjall=off,lsm_tree=off,hyper=info,rustls=off,sled=info,\
             tungstenite=info,message_io=debug,mio=debug,quinn_proto=off,\
             tokio_util=off"
         }

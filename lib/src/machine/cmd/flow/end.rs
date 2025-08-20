@@ -1,7 +1,6 @@
 use arrayvec::ArrayVec;
 
-use crate::executor::Signal;
-use crate::{model, rpc, CompName, Executor, Int, Var, VarType};
+use crate::{model, rpc, CompName, Executor, Int, Signal, Var, VarType};
 
 use crate::entity::{Entity, Storage};
 use crate::model::Model;

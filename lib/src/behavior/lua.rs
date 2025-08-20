@@ -2,7 +2,7 @@ use mlua::{Lua, LuaSerdeExt, UserData, UserDataMethods};
 use tokio_stream::StreamExt;
 
 use crate::{
-    address::LocalAddress, executor::Signal, rpc, Address, EntityName, Error, EventName, Executor,
+    address::LocalAddress, rpc, rpc::Signal, Address, EntityName, Error, EventName, Executor,
     LocalExec, Result, Var, VarType,
 };
 

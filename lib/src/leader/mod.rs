@@ -19,11 +19,11 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::executor::{Executor, LocalExec, RemoteExec, Signal};
+use crate::executor::{Executor, LocalExec, RemoteExec};
 use crate::leader::manager::ManagerExec;
 use crate::net::{ConnectionOrAddress, Encoding};
 use crate::rpc::leader::{Request, RequestLocal, Response};
-use crate::rpc::{Caller, Participant};
+use crate::rpc::{Caller, Participant, Signal};
 use crate::util::{self, decode, encode};
 use crate::worker::{WorkerExec, WorkerId, WorkerRemoteExec};
 use crate::{model, net, query, rpc, Model, QueryProduct};
@@ -271,23 +271,19 @@ async fn handle_local_worker_request(
 pub async fn handle_worker_request(
     req: rpc::leader::Request,
     ctx: Option<rpc::Context>,
-    leader: ManagerExec,
+    manager: ManagerExec,
 ) -> Result<Signal<rpc::leader::Response>> {
     use rpc::leader::{Request, Response};
 
     match req {
         Request::ReplaceModel(model) => {
-            // debug!(
-            //     "pulling model, bytes: {}",
-            //     bincode::serialize(&model)?.len()
-            // );
-            unimplemented!();
-            // leader.lock().await.project = Some(project);
-            Ok(Signal::new(rpc::leader::Response::ReplaceModel, ctx))
+            let ctx = ctx.map(|c| c.register_hop(Participant::Leader));
+            manager.replace_model(model).await?;
+            Ok(Signal::new(rpc::leader::Response::Empty, ctx))
         }
         Request::Ping(bytes) => Ok(Signal::new(Response::Ping(bytes), ctx)),
-        Request::Model => {
-            let model = leader.get_model().await?;
+        Request::GetModel => {
+            let model = manager.get_model().await?;
             Ok(Signal::new(Response::Model(model), ctx))
         }
         // Request::MemorySize => {
@@ -312,7 +308,7 @@ pub async fn handle_worker_request(
             // }
             Ok(Signal::new(Response::Empty, ctx))
         }
-        _ => handle_request(req, ctx, leader).await,
+        _ => handle_request(req, ctx, manager).await,
     }
 }
 
@@ -485,7 +481,6 @@ async fn handle_request(
         Request::DisconnectWorker => {
             if let Some(ctx) = ctx {
                 manager.remove_worker(ctx.origin.id()).await?;
-                println!("leader: worker disconnected");
                 Ok(Signal::new(Response::Empty, Some(ctx)))
             } else {
                 Err(Error::ContextRequired(format!("request: {:?}", req)))
@@ -503,7 +498,7 @@ async fn handle_request(
             Response::Clock(manager.get_clock().await?),
             ctx,
         )),
-        Request::Model => Ok(Signal::new(
+        Request::GetModel => Ok(Signal::new(
             Response::Model(manager.get_model().await?),
             ctx,
         )),
@@ -574,7 +569,7 @@ async fn handle_request(
                 "Unable to process WorkerProxy request".to_string(),
             ))?;
 
-            if let rpc::worker::Request::ProcessQuery(query) = request {
+            if let rpc::worker::Request::ProcessQuery(query) = *request {
                 match query.scope {
                     // Pass the query to all known workers.
                     query::Scope::Global => {
@@ -629,7 +624,7 @@ async fn handle_request(
                     }
                     _ => unimplemented!(),
                 }
-            } else if let rpc::worker::Request::TakeEntity(name, entity) = request {
+            } else if let rpc::worker::Request::TakeEntity(name, entity) = *request {
                 // Worker has tasked us with passing the request to take an
                 // existing entity to another worker.
                 // HACK: choose a random worker.
@@ -671,6 +666,14 @@ async fn handle_request(
                     ))
                     .await?;
             }
+            Ok(Signal::new(Response::Empty, ctx))
+        }
+        Request::LoadSnapshot(snapshot) => {
+            manager.set_model(snapshot.model).await?;
+            manager.set_clock(snapshot.clock).await?;
+
+            // TODO:
+
             Ok(Signal::new(Response::Empty, ctx))
         }
     }

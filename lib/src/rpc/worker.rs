@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::behavior::{BehaviorHandle, BehaviorTarget};
 use crate::entity::Entity;
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::net::CompositeAddress;
 use crate::server::ServerId;
 use crate::worker::WorkerId;
@@ -13,10 +13,10 @@ use crate::{
     Snapshot, Var,
 };
 
-use super::{leader, server};
+use super::{leader, server, Signal};
 
 /// Local protocol is not meant to be serialized for over-the-wire transfer.
-#[derive(Clone)]
+#[derive(Clone, strum::Display)]
 pub enum RequestLocal {
     /// Introduce worker to leader with local channel.
     ///
@@ -28,15 +28,22 @@ pub enum RequestLocal {
         LocalExec<Signal<leader::RequestLocal>, Result<Signal<leader::Response>>>,
         LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
     ),
+    IntroduceLeader(LocalExec<Signal<leader::RequestLocal>, Result<Signal<leader::Response>>>),
     ConnectToServer(
         LocalExec<Signal<server::RequestLocal>, Result<Signal<server::Response>>>,
         LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
     ),
-    ConnectToWorker(),
-    IntroduceLeader(LocalExec<Signal<leader::RequestLocal>, Result<Signal<leader::Response>>>),
     IntroduceServer(
         ServerId,
         LocalExec<Signal<server::RequestLocal>, Result<Signal<server::Response>>>,
+    ),
+    ConnectToWorker(
+        LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
+        LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
+    ),
+    IntroduceWorker(
+        WorkerId,
+        LocalExec<Signal<RequestLocal>, Result<Signal<Response>>>,
     ),
 
     AddBehavior(BehaviorTarget, BehaviorHandle),
@@ -155,6 +162,8 @@ pub enum Request {
 
     Snapshot,
 
+    LeaderProxy(Box<super::leader::Request>),
+
     #[cfg(feature = "machine")]
     MachineLogic {
         name: String,
@@ -226,20 +235,22 @@ pub enum Response {
 
     Snapshot(Snapshot),
 
+    LeaderProxy(Box<super::leader::Response>),
+
     #[cfg(feature = "machine")]
     MachineLogic(crate::machine::Logic),
 }
 
 impl Response {
-    pub fn ok(self) -> Result<()> {
+    pub fn empty(self) -> Result<()> {
         match self {
             Self::Empty => Ok(()),
             _ => Err(Error::UnexpectedResponse(format!("{:?}", self))),
         }
     }
 
-    pub fn is_ok(self) -> bool {
-        self.ok().is_ok()
+    pub fn is_empty(self) -> bool {
+        self.empty().is_ok()
     }
 }
 

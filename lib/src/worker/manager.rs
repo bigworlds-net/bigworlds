@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::behavior::{BehaviorHandle, BehaviorTarget};
 use crate::entity::Entity;
-use crate::executor::{LocalExec, Signal};
+use crate::executor::LocalExec;
 use crate::net::CompositeAddress;
 use crate::rpc::{Caller, Participant};
 use crate::server::ServerId;
@@ -21,7 +21,7 @@ use crate::worker::part::Partition;
 use crate::worker::{Leader, LeaderSituation, Server, ServerExec, State};
 use crate::{
     net, query, rpc, util, Address, EntityName, Error, Executor, Model, PrefabName, Query,
-    QueryProduct, Result, Var,
+    QueryProduct, Result, Signal, Snapshot, Var,
 };
 
 use super::{Config, OtherWorker, Subscription, WorkerId};
@@ -29,6 +29,10 @@ use super::{Config, OtherWorker, Subscription, WorkerId};
 pub type ManagerExec = LocalExec<Request, Result<Response>>;
 
 impl ManagerExec {
+    pub async fn snapshot(&self) -> Result<Snapshot> {
+        self.execute(Request::Snapshot).await??.try_into()
+    }
+
     pub async fn broadcast(&self) -> Result<()> {
         Ok(())
     }
@@ -98,7 +102,7 @@ impl ManagerExec {
         }
     }
 
-    pub async fn get_leader(&self) -> Result<LeaderSituation> {
+    pub async fn get_leader(&self) -> Result<Leader> {
         let resp = self.execute(Request::GetLeader).await??;
         if let Response::GetLeader(leader) = resp {
             Ok(leader)
@@ -107,13 +111,17 @@ impl ManagerExec {
         }
     }
 
-    pub async fn set_leader(&self, leader: LeaderSituation) -> Result<()> {
+    pub async fn set_leader(&self, leader: Leader) -> Result<()> {
         let resp = self.execute(Request::SetLeader(leader)).await??;
         if let Response::Empty = resp {
             Ok(())
         } else {
             Err(Error::UnexpectedResponse(resp.to_string()))
         }
+    }
+
+    pub async fn send_to_leader(&self, leader: LeaderSituation) -> Result<()> {
+        todo!()
     }
 
     pub async fn get_other_workers(&self) -> Result<FnvHashMap<WorkerId, OtherWorker>> {
@@ -196,7 +204,7 @@ impl ManagerExec {
         }
     }
 
-    pub async fn get_clock_watch(&self) -> Result<watch::Receiver<usize>> {
+    pub async fn get_clock_watch(&self) -> Result<watch::Receiver<u64>> {
         let resp = self.execute(Request::GetClockWatch).await??;
         if let Response::GetClockWatch(watch) = resp {
             Ok(watch)
@@ -205,7 +213,7 @@ impl ManagerExec {
         }
     }
 
-    pub async fn set_clock_watch(&self, value: usize) -> Result<()> {
+    pub async fn set_clock_watch(&self, value: u64) -> Result<()> {
         let resp = self.execute(Request::SetClockWatch(value)).await??;
         if let Response::Empty = resp {
             Ok(())
@@ -385,8 +393,6 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
 
             Ok(Response::Empty)
         }
-        // TODO: consider a separate request for getting leader or err,
-        // instead of returning the whole leader situation enum.
         Request::GetLeader => Ok(Response::GetLeader(worker.leader.clone())),
         Request::SetLeader(leader) => {
             worker.leader = leader;
@@ -432,6 +438,8 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 // TODO: include archived entities conditionally.
                 entities.extend(
                     part.archive
+                        .as_ref()
+                        .ok_or(Error::ArchiveDisabled)?
                         .iter()
                         .map(|k| EntityName::from_utf8(k.unwrap().0.to_vec()).unwrap()),
                 );
@@ -521,7 +529,6 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             Ok(Response::Empty)
         }
         Request::GetSubscriptions => Ok(Response::Subscriptions(worker.subscriptions.clone())),
-
         Request::GetModel => {
             if let Some(model) = &worker.model {
                 Ok(Response::Model(model.clone()))
@@ -589,7 +596,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 }
 
                 // Let the leader know we're shutting down.
-                if let LeaderSituation::Connected(leader) = &worker.leader {
+                if let LeaderSituation::Connected(leader) = &worker.leader.situation {
                     // println!(">>> letting leader know we're shutting down the worker");
                     leader
                         .execute(
@@ -707,6 +714,27 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 Err(Error::WorkerNotInitialized(format!("part not available")))
             }
         }
+        Request::Snapshot => {
+            let entities = if let Some(partition) = &worker.part {
+                partition
+                    .entities
+                    .iter()
+                    .map(|(id, entity)| (id.clone(), entity.clone()))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+
+            let snap = Snapshot {
+                created_at: chrono::Utc::now().timestamp() as u32,
+                worker_count: 1,
+                clock: *worker.clock_watch.1.borrow(),
+                model: worker.model.clone().unwrap_or(Model::default()),
+                entities,
+            };
+
+            Ok(Response::Snapshot(snap))
+        }
     }
 }
 
@@ -719,7 +747,7 @@ pub enum Request {
     GetBlockedWatch,
     SetBlockedWatch(bool),
     GetClockWatch,
-    SetClockWatch(usize),
+    SetClockWatch(u64),
     GetServers,
     GetOtherWorkers,
     AddOtherWorker(OtherWorker),
@@ -728,7 +756,7 @@ pub enum Request {
     GetUnsyncedBehaviorTx,
     MemorySize,
     GetLeader,
-    SetLeader(LeaderSituation),
+    SetLeader(Leader),
     InsertServer(ServerId, Server),
 
     ProcessQuery(Query),
@@ -754,6 +782,7 @@ pub enum Request {
     GetEntity(EntityName),
     GetListeners,
     AddBehavior(BehaviorTarget, BehaviorHandle),
+    Snapshot,
 
     #[cfg(feature = "machine")]
     GetMachineHandles,
@@ -764,10 +793,10 @@ pub enum Response {
     GetId(WorkerId),
     GetConfig(super::Config),
     GetBlockedWatch(watch::Receiver<bool>),
-    GetClockWatch(watch::Receiver<usize>),
+    GetClockWatch(watch::Receiver<u64>),
     GetServers(FnvHashMap<ServerId, Server>),
     GetOtherWorkers(FnvHashMap<WorkerId, OtherWorker>),
-    GetLeader(LeaderSituation),
+    GetLeader(Leader),
     GetSyncedBehaviorHandles(FnvHashMap<BehaviorTarget, Vec<BehaviorHandle>>),
     GetUnsyncedBehaviorTx(tokio::sync::broadcast::Sender<rpc::behavior::Request>),
     GetListeners(Vec<CompositeAddress>),
@@ -781,6 +810,8 @@ pub enum Response {
 
     Subscriptions(Vec<Subscription>),
 
+    Snapshot(Snapshot),
+
     Empty,
 
     #[cfg(feature = "machine")]
@@ -790,9 +821,20 @@ pub enum Response {
 impl TryInto<Var> for Response {
     type Error = Error;
 
-    fn try_into(self) -> std::result::Result<Var, Self::Error> {
+    fn try_into(self) -> Result<Var> {
         match self {
             Response::GetVar(var) => Ok(var),
+            _ => Err(Error::UnexpectedResponse(self.to_string())),
+        }
+    }
+}
+
+impl TryInto<Snapshot> for Response {
+    type Error = Error;
+
+    fn try_into(self) -> Result<Snapshot> {
+        match self {
+            Response::Snapshot(snap) => Ok(snap),
             _ => Err(Error::UnexpectedResponse(self.to_string())),
         }
     }
