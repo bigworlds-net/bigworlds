@@ -63,7 +63,7 @@ impl Model {
         // Start the include loop. Once it ends we should have all model files
         // merged into the top level model.
         loop {
-            // Pop another include
+            // Pop another include.
             if let Some(include) = to_include.pop() {
                 trace!("including from path: {include}");
 
@@ -73,11 +73,9 @@ impl Model {
                 } else {
                     PathBuf::from(&include)
                 };
-                if path.is_dir() {
-                    for entry in path.read_dir()? {
-                        if let Ok(entry) = entry {
-                            to_include.push(entry.path().to_string_lossy().to_string());
-                        }
+                if let Ok(dir) = fs.read_dir(path.to_str().unwrap()) {
+                    for entry in dir {
+                        to_include.push(path.join(entry).to_string_lossy().to_string());
                     }
                     continue;
                 }
