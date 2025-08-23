@@ -1,0 +1,174 @@
+[package]
+name = "bigworlds"
+version = "0.1.1"
+authors = ["Adam Wierchoła <adam@wierchola.com>"]
+edition = "2021"
+repository = "https://github.com/bigworlds-net/bigworlds"
+description = "Dynamically scalable virtual worlds."
+readme = "README.md"
+license = "AGPL-3.0-only"
+
+[features]
+default = [
+  "quic_transport",
+  "ws_transport",
+
+  "machine",
+  "behavior_dynlib",
+  "behavior_wasm",
+  "behavior_lua",
+
+  "http_server",
+  "grpc_server",
+
+  # "archive"
+]
+
+quic_transport = []
+ws_transport = ["tokio-tungstenite"]
+
+msgpack_encoding = ["rmp-serde"]
+
+# serve clients via http
+http_server = ["axum"]
+# serve clients via grpc
+grpc_server = ["tonic", "prost"]
+
+# zero-copy deserialization scheme
+archive = ["rkyv"]
+
+# enable dynamic library behaviors
+behavior_dynlib = ["libloading"]
+# enable wasm behaviors
+behavior_wasm = ["wasmtime"]
+# enable lua behaviors
+behavior_lua = ["mlua"]
+
+# enable dsl flavoured state-machine behaviors
+machine = ["fasteval", "shlex", "smallvec", "annotate-snippets"]
+# enable machines' calls to dynamic libraries
+machine_dynlib = []
+# expose system information to machine preprocessor and runtime
+machine_sysinfo = ["sysinfo"]
+# enable non-sandboxed machine functionality
+machine_full = ["machine", "machine_dynlib", "machine_sysinfo"]
+
+# use fixed-size string ids (23 chars long)
+small_stringid = []
+# use fixed-size string ids (10 chars long)
+tiny_stringid = []
+# use 64 bit integers and floats instead of default 32 bit
+big_nums = []
+
+[dependencies]
+serde = "1"
+serde_repr = "0.1"
+serde_bytes = "0.11"
+serde_with = "3.14"
+bincode = "1.3.3"
+serde_json = { version = "1" }
+rmp-serde = { version = "1", optional = true }
+toml = { version = "0.5", features = ["preserve_order"] }
+rkyv = { version = "0.8", features = [
+  "uuid-1",
+  "smallvec-1",
+  "arrayvec-0_7",
+], optional = true }
+bytecheck = "0.6"
+strum = { version = "0.26", features = ["derive"] }
+fjall = "2.11.2"
+
+byteorder = "1"
+bytes = "1"
+num_enum = "0.5"
+integer-encoding = { version = "4" }
+lz4 = "1"
+rand = "0.9.0-beta.1"
+ordered-float = { version = "5.0", features = ["rkyv_32", "serde"] }
+
+log = "0.4"
+thiserror = "1"
+itertools = "0.10"
+
+id-pool = { version = "0.2.2", default-features = false, features = [
+  "u32",
+  "serde",
+] }
+fnv = "1"
+chrono = { version = "0.4", features = ["serde", "rkyv"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+deepsize = { version = "0.2.0", features = ["arrayvec", "smallvec"] }
+strsim = "0.10"
+
+tokio = { version = "1", features = [
+  "sync",
+  "macros",
+  "io-util",
+  "time",
+  "rt",
+  "rt-multi-thread",
+] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["codec", "net"] }
+async-trait = "0.1"
+futures = "0.3"
+
+axum = { version = "0.6.1", features = ["macros", "ws"], optional = true }
+
+tokio-tungstenite = { version = "0.20", features = [
+  "rustls-tls-native-roots",
+], optional = true }
+tonic = { version = "0.13", optional = true }
+prost = { version = "0.13.5", optional = true }
+
+quinn = { version = "0.9", features = [] }
+rcgen = { version = "0.10" }
+rustls = { version = "0.20", features = ["quic", "dangerous_configuration"] }
+rustls-native-certs = "0.6"
+
+libloading = { version = "0.7", optional = true }
+wasmtime = { version = "32.0.0", optional = true }
+
+fasteval = { version = "0.2.4", optional = true }
+annotate-snippets = { version = "0.9", features = ["color"], optional = true }
+getopts = { version = "0.2" }
+shlex = { version = "1", optional = true }
+arrayvec = { version = "0.7", features = ["serde"] }
+smallvec = { version = "1", features = ["serde"], optional = true }
+sysinfo = { version = "0.26", optional = true }
+num_cpus = "1"
+directories = "6"
+url = { version = "2.5.4", features = ["serde"] }
+
+enum-as-inner = "0.5"
+linked-hash-map = { version = "0.5", features = ["serde_impl"] }
+semver = "1"
+
+image = { version = "0.24", default-features = false, features = ["png"] }
+
+tar = "0.4"
+vfs = "0.9.0"
+
+mlua = { version = "0.11.0-beta.2", features = [
+  "lua54",
+  "vendored",
+  "async",
+  "send",
+  "serde",
+], optional = true }
+
+[dev-dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+criterion = "0.4"
+env_logger = "0.11.8"
+simplelog = "0.12.2"
+sysinfo = "0.36.1"
+
+[build-dependencies]
+tonic-build = "0.13"
+
+
+[[example]]
+name = "repl"
+required-features = ["machine"]

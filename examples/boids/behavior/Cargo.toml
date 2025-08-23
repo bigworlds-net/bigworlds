@@ -8,7 +8,7 @@ path = "src/lib.rs"
 crate-type = ["dylib"]
 
 [dependencies]
-bigworlds = { path = "../../../lib" }
+bigworlds = { path = "../../../bigworlds" }
 futures = "0.3.31"
 tokio = "1"
 tokio-util = "0.7.13"

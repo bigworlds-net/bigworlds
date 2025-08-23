@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bigworlds = { path = "../../../../lib" }
+bigworlds = { path = "../../../../bigworlds" }
 
 tokio = { version = "1", features = ["full"] }
 crossterm = { version = "0.28.1", features = ["use-dev-tty"] }

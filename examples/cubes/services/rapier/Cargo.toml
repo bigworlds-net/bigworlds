@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bigworlds = { path = "../../../../lib" }
+bigworlds = { path = "../../../../bigworlds" }
 # bigworlds-client = { path = "../../../../clients/messageio-client", package = "messageio-client" }
 
 rapier3d = "0.26.0"

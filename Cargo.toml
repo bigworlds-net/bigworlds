@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
-members = [ 
-    "lib",
-    "cli",
+members = [
+    "bigworlds",
+    "bigworlds-cli",
+    "clients/grpc-client",
     "examples/*/viewers/*",
     # "examples/**"
 ]
@@ -10,5 +11,5 @@ members = [
 exclude = [
     "examples/cubes/services/rapier",
     "examples/cubes/behaviors/setup",
-    "examples/cubes/viewers/bevy"
+    "examples/cubes/viewers/bevy",
 ]

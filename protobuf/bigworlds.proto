@@ -1,0 +1,315 @@
+syntax = "proto3";
+
+package bigworlds;
+
+// The external world service definition.
+service Worlds {
+  rpc RegisterClient (RegisterClientRequest) returns (RegisterClientResponse) {}
+  rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {}
+  rpc Query (QueryRequest) returns (QueryResponse) {}
+}
+
+message RegisterClientRequest {
+  string name = 1;
+  bool is_blocking = 2;
+  AuthPair auth_pair = 3;
+  repeated Encoding encodings = 4;
+  repeated Transport transports = 5;
+}
+
+message RegisterClientResponse {
+  string client_id = 1;
+  Encoding encoding = 2;
+  Transport transport = 3;
+  string redirect_to = 4;
+}
+
+// Expanded Trigger message and enum
+message Trigger {
+  oneof kind {
+    StepEvent step_event = 1;
+    EventTrigger event = 2;
+    EventAnyTrigger event_any = 3;
+    TimerTrigger timer = 4;
+    EntityAccessTrigger entity_access = 5;
+    EntityMutationTrigger entity_mutation = 6;
+    DataMutationTrigger data_mutation = 7;
+    DataMutationAnyTrigger data_mutation_any = 8;
+    DataMutationAllTrigger data_mutation_all = 9;
+  }
+}
+
+message StepEvent {}
+message EventTrigger { string event_name = 1; }
+message EventAnyTrigger { repeated string event_names = 1; }
+message TimerTrigger { int64 duration_ms = 1; }
+message EntityAccessTrigger { string entity_name = 1; }
+message EntityMutationTrigger { string entity_name = 1; }
+message DataMutationTrigger { string address = 1; }
+message DataMutationAnyTrigger { repeated string addresses = 1; }
+message DataMutationAllTrigger { repeated string addresses = 1; }
+
+// Expanded Query message
+message Query {
+  Description description = 1;
+  Layout layout = 2;
+  repeated Filter filters = 3;
+  repeated Map mappings = 4;
+  Scope scope = 5;
+}
+
+enum Description {
+  DESCRIPTION_NATIVE_DESCRIBED = 0;
+  DESCRIPTION_ADDRESSED = 1;
+  DESCRIPTION_ENTITY = 2;
+  DESCRIPTION_ENTITY_MANY = 3;
+  DESCRIPTION_COMPONENT = 4;
+  DESCRIPTION_VAR = 5;
+  DESCRIPTION_COMPONENT_VAR = 6;
+  DESCRIPTION_ORDERED = 7;
+  DESCRIPTION_NONE = 8;
+}
+
+enum Layout {
+  LAYOUT_VAR = 0;
+  LAYOUT_STRING = 1;
+  LAYOUT_TYPED = 2;
+}
+
+enum Scope {
+  SCOPE_GLOBAL = 0;
+  SCOPE_LOCAL = 1;
+  SCOPE_BROADCASTS = 2;
+  SCOPE_EDGES = 3;
+  SCOPE_WORKERS = 4;
+  SCOPE_TIME = 5;
+}
+
+// Expanded Filter message and enum
+message Filter {
+  oneof kind {
+    AllComponents all_components = 1;
+    SomeComponents some_components = 2;
+    ComponentFilter component = 3;
+    NameFilter name = 4;
+    IdFilter id = 5;
+    VarRangeFilter var_range = 6;
+    AttrRangeFilter attr_range = 7;
+    DistanceFilter distance = 8;
+    DistanceMultiPointFilter distance_multi_point = 9;
+    NodeFilter node = 10;
+  }
+}
+
+message AllComponents { repeated string component_names = 1; }
+message SomeComponents { repeated string component_names = 1; }
+message ComponentFilter { string component_name = 1; }
+message NameFilter { repeated string entity_names = 1; }
+message IdFilter { repeated string entity_ids = 1; }
+message VarRangeFilter { string local_address = 1; string var_start = 2; string var_end = 3; }
+message AttrRangeFilter { string attr_id = 1; string var_start = 2; string var_end = 3; }
+message DistanceFilter { string address_x = 1; string address_y = 2; string address_z = 3; double max_x = 4; double max_y = 5; double max_z = 6; }
+message DistanceMultiPointFilter { repeated DistanceFilter points = 1; }
+message NodeFilter { NodeFilterType type = 1; int32 value = 2; }
+
+enum NodeFilterType {
+  NODE_FILTER_LOCAL = 0;
+  NODE_FILTER_REMOTE = 1;
+}
+
+// Expanded Map message and enum
+message Map {
+  oneof kind {
+    MapAll all = 1;
+    SelectAddrs select_addrs = 2;
+    ComponentsMap components = 3;
+    ComponentMap component = 4;
+    VarMap var = 5;
+    VarNameMap var_name = 6;
+    VarTypeMap var_type = 7;
+  }
+}
+
+message MapAll {}
+message SelectAddrs { repeated string addresses = 1; }
+message ComponentsMap { repeated string component_names = 1; }
+message ComponentMap { string component_name = 1; }
+message VarMap { string var_type = 1; string var_name = 2; }
+message VarNameMap { string var_name = 1; }
+message VarTypeMap { string var_type = 1; }
+
+// Expanded QueryRequest and QueryResponse
+message QueryRequest {
+  Query query = 1;
+}
+
+message QueryResponse {
+  QueryProduct product = 1;
+}
+
+// QueryProduct represents structured query results
+message QueryProduct {
+  // The actual query result data
+  oneof data {
+    // Simple list of variables without address information
+    VarList var_list = 1;
+    // Variables mapped to their addresses
+    AddressedVarMap addressed_var_map = 2;
+    // Empty result
+    Empty empty = 3;
+  }
+}
+
+// Simple list of variables (corresponds to QueryProduct::Var)
+message VarList {
+  repeated Var vars = 1;
+}
+
+// Variables mapped to their addresses (corresponds to QueryProduct::AddressedVar)
+message AddressedVarMap {
+  repeated AddressedVarEntry entries = 1;
+}
+
+// Single entry in an addressed var map
+message AddressedVarEntry {
+  string address = 1;  // Serialized Address
+  Var value = 2;
+}
+
+// Empty result (corresponds to QueryProduct::Empty)
+message Empty {
+}
+
+// Variable value representation
+message Var {
+  oneof value {
+    string string_value = 1;
+    int32 int_value = 2;
+    float float_value = 3;
+    bool bool_value = 4;
+    bytes byte_value = 5;
+    Vec2 vec2_value = 6;
+    Vec3 vec3_value = 7;
+    VarList list_value = 8;
+    VarGrid grid_value = 9;
+    VarValueMap map_value = 10;
+  }
+}
+
+// 2D vector
+message Vec2 {
+  float x = 1;
+  float y = 2;
+}
+
+// 3D vector
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// Grid of variables (2D array)
+message VarGrid {
+  repeated VarRow rows = 1;
+}
+
+// Single row in a grid
+message VarRow {
+  repeated Var cells = 1;
+}
+
+// Map of variables
+message VarValueMap {
+  repeated VarValueMapEntry entries = 1;
+}
+
+// Single entry in a var map
+message VarValueMapEntry {
+  string key = 1;
+  Var value = 2;
+}
+
+// Metadata about the query execution
+message QueryMetadata {
+  // Query execution timestamp
+  int64 timestamp = 1;
+  // Query execution duration in milliseconds
+  int64 duration_ms = 2;
+  // Number of results returned
+  int32 result_count = 3;
+  // Query status
+  QueryStatus status = 4;
+  // Additional metadata as key-value pairs
+  map<string, string> metadata = 5;
+}
+
+enum QueryStatus {
+  QUERY_STATUS_SUCCESS = 0;
+  QUERY_STATUS_PARTIAL = 1;
+  QUERY_STATUS_ERROR = 2;
+  QUERY_STATUS_TIMEOUT = 3;
+  QUERY_STATUS_NOT_FOUND = 4;
+}
+
+// TODO: Add other QueryProduct variants as needed
+// - NativeAddressedVar
+// - NameAddressedVar  
+// - NameAddressedVars
+// - AddressedTyped
+// - OrderedVar
+// - String
+
+
+
+// Binary result for raw data
+message BinaryResult {
+  bytes data = 1;
+  string mime_type = 2;
+  string encoding = 3;
+}
+
+// Error result
+message ErrorResult {
+  string error_code = 1;
+  string error_message = 2;
+  string error_details = 3;
+  repeated string stack_trace = 4;
+}
+
+// Expanded SubscribeRequest and SubscribeResponse
+message SubscribeRequest {
+  repeated Trigger triggers = 1;
+  Query query = 2;
+}
+
+message SubscribeResponse {
+  oneof message {
+    SubscriptionId subscription_id = 1;
+    QueryProduct product = 2;
+  }
+}
+
+message SubscriptionId {
+  string id = 1;
+}
+
+// --- Added for compilation ---
+message AuthPair {
+  string username = 1;
+  string password = 2;
+}
+
+enum Encoding {
+  ENCODING_UNSPECIFIED = 0;
+  ENCODING_BINCODE = 1;
+  ENCODING_MSGPACK = 2;
+  ENCODING_JSON = 3;
+}
+
+enum Transport {
+  TRANSPORT_UNSPECIFIED = 0;
+  TRANSPORT_GRPC = 1;
+  TRANSPORT_WS = 2;
+  TRANSPORT_TCP = 3;
+}

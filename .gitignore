@@ -1,3 +1,6 @@
+**/.bigworlds
+**/snapshots/**
+
 **/target/
 Cargo.lock
 .idea
