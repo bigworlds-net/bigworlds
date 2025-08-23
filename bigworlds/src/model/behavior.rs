@@ -125,10 +125,11 @@ pub enum BehaviorInner {
 
 /// Implementation for turning the intermediate representation into a proper
 /// behavior model.
-impl TryFrom<intermediate::Behavior> for Behavior {
-    type Error = Error;
-
-    fn try_from(i: intermediate::Behavior) -> Result<Self> {
+impl Behavior {
+    pub fn from_intermediate<FS: vfs::FileSystem>(
+        i: intermediate::Behavior,
+        fs: &FS,
+    ) -> Result<Self> {
         let inner = match i.r#type.as_str() {
             #[cfg(feature = "behavior_lua")]
             "lua" => {
@@ -138,8 +139,11 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                         synced: i.synced,
                     }
                 } else {
-                    println!("lua script path: {}", i.path);
-                    unimplemented!()
+                    let script = crate::util::read_text_file(fs, &i.path)?;
+                    BehaviorInner::Lua {
+                        script,
+                        synced: i.synced,
+                    }
                 }
             }
             #[cfg(feature = "machine")]
@@ -216,8 +220,7 @@ impl TryFrom<intermediate::Behavior> for Behavior {
                             }
                         } else {
                             // println!("lua script path: {}", i.path);
-                            let script = crate::util::read_file(&i.path)?;
-                            // println!("read lua script OK");
+                            let script = crate::util::read_text_file(fs, &i.path)?;
                             BehaviorInner::Lua {
                                 script,
                                 synced: i.synced,

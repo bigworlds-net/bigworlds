@@ -71,6 +71,12 @@ pub async fn spawn() -> Result<SimHandle> {
 }
 
 /// Spawns a local simulation instance based on provided configuration.
+pub async fn spawn_with_config(config: SimConfig) -> Result<SimHandle> {
+    spawn_with(config, CancellationToken::new()).await
+}
+
+/// Spawns a local simulation instance based on provided configuration.
+/// Additionally takes in a cancellation token.
 pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<SimHandle> {
     // Spawn the leader task.
     let mut leader_handle = leader::spawn(config.leader.clone(), cancel.clone())?;

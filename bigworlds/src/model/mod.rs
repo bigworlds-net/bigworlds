@@ -103,10 +103,8 @@ pub struct Model {
 }
 
 /// Defines translation from intermediate to regular model definition.
-impl TryFrom<intermediate::Model> for Model {
-    type Error = Error;
-
-    fn try_from(im: intermediate::Model) -> Result<Self> {
+impl Model {
+    fn from_intermediate<FS: vfs::FileSystem>(im: intermediate::Model, fs: &FS) -> Result<Self> {
         let mut model = Self::default();
 
         for im_scenario in im.scenarios {
@@ -139,7 +137,7 @@ impl TryFrom<intermediate::Model> for Model {
         }
 
         for im_behavior in im.behaviors {
-            let behavior = im_behavior.try_into()?;
+            let behavior = Behavior::from_intermediate(im_behavior, fs)?;
             model.behaviors.push(behavior);
         }
 
@@ -194,6 +192,10 @@ impl Model {
         Ok(())
     }
 
+    pub fn from_files_at(path: PathBuf) -> Result<Self> {
+        Model::from_files(&vfs::PhysicalFS::new(path), None)
+    }
+
     /// Creates a new simulation model using provided file system.
     pub fn from_files<FS: vfs::FileSystem>(fs: &FS, root: Option<&str>) -> Result<Self> {
         // Create an intermediate model from files. We end up with the full
@@ -201,14 +203,8 @@ impl Model {
         // In the subsequent steps the intermediate form gets normalized into
         // the regular model representation.
         let intermediate = intermediate::Model::from_files(fs, root)?;
-        // debug!("Intermediate model: {intermediate:?}");
 
-        // create an empty sim model to work on
-        let mut model = Model::try_from(intermediate)?;
-
-        // load from scripts
-        {}
-        // model.prefabs.push(mod_init_prefab);
+        let mut model = Model::from_intermediate(intermediate, fs)?;
 
         Ok(model)
     }
