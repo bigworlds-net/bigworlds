@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::ArgMatches;
 use tokio_util::sync::CancellationToken;
 
-use bigworlds::{leader, net::CompositeAddress, rpc, server, worker, Executor};
+use bigworlds::{leader, net::CompositeAddress, rpc, server, worker, Context, Executor};
 
 pub fn cmd() -> clap::Command {
     use clap::{Arg, Command};

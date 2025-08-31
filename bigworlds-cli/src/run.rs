@@ -41,6 +41,11 @@ pub fn cmd() -> clap::Command {
                 .help("Provide path to a snapshot file"),
         )
         .arg(
+            Arg::new("workers")
+                .long("workers")
+                .help("Set the number of workers tasks"),
+        )
+        .arg(
             Arg::new("server")
                 .long("server")
                 .short('s')
@@ -199,6 +204,9 @@ async fn start_run_model(
                 .collect::<Vec<_>>(),
             ..Default::default()
         })
+    }
+    if let Some(worker_count) = matches.get_one::<String>("workers") {
+        config.worker_count = worker_count.parse().unwrap();
     }
 
     let mut sim = bigworlds::sim::spawn_from_model_at(
