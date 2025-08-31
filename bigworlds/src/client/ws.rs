@@ -37,7 +37,7 @@ impl WsClient {
             encodings: vec![],
             transports: vec![],
         });
-        let msg = tungstenite::Message::Binary(bincode::serialize(&msg).unwrap());
+        let msg = tungstenite::Message::Binary(bincode::serialize(&msg).unwrap().into());
         socket.send(msg).await;
 
         let resp = socket.next().await.unwrap().unwrap();
@@ -49,7 +49,7 @@ impl WsClient {
     }
 
     pub async fn execute(&mut self, msg: Message) -> Result<Message> {
-        let msg = tungstenite::Message::Binary(bincode::serialize(&msg)?);
+        let msg = tungstenite::Message::Binary(bincode::serialize(&msg)?.into());
         // println!("ws: sending for execution: {msg:?}");
         self.socket
             .send(msg)
@@ -83,7 +83,7 @@ impl AsyncClient for WsClient {
             encodings: vec![],
             transports: vec![],
         });
-        let msg = tungstenite::Message::Binary(bincode::serialize(&msg).unwrap());
+        let msg = tungstenite::Message::Binary(bincode::serialize(&msg).unwrap().into());
         socket.send(msg).await;
 
         let resp = socket.next().await.unwrap().unwrap();

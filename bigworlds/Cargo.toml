@@ -115,7 +115,7 @@ futures = "0.3"
 
 axum = { version = "0.6.1", features = ["macros", "ws"], optional = true }
 
-tokio-tungstenite = { version = "0.20", features = [
+tokio-tungstenite = { version = "0.27", features = [
   "rustls-tls-native-roots",
 ], optional = true }
 tonic = { version = "0.13", optional = true }

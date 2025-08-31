@@ -33,7 +33,7 @@ pub fn spawn_listener(
 
             let (snd, mut rcv) = tokio::sync::mpsc::channel::<Vec<u8>>(20);
             let mut rcv_stream = tokio_stream::wrappers::ReceiverStream::new(rcv)
-                .map(|b| Ok(tokio_tungstenite::tungstenite::Message::Binary(b)));
+                .map(|b| Ok(tokio_tungstenite::tungstenite::Message::Binary(b.into())));
             tokio::spawn(async move {
                 write.send_all(&mut rcv_stream).await;
             });
@@ -61,7 +61,7 @@ pub fn spawn_listener(
                                     _ => unimplemented!("{:?}", msg),
                                 };
 
-                                match exec_cc.execute((ConnectionOrAddress::Address(addr_c), bytes)).await {
+                                match exec_cc.execute((ConnectionOrAddress::Address(addr_c), bytes.to_vec())).await {
                                     Ok(resp_bytes) => if let Err(e) = snd_c.send(resp_bytes).await {
                                         error!("{}", e.to_string());
                                     },
