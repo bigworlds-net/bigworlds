@@ -1,4 +1,4 @@
-//! Example showing off node-level supervision and leader election upon loosing
+//! Tests for node-level supervision and leader election upon loosing
 //! a leader.
 //!
 //! # Considerations
@@ -32,10 +32,11 @@ use bigworlds::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn basic_election() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
@@ -55,8 +56,8 @@ async fn main() -> anyhow::Result<()> {
             let mut node = node::spawn(node::Config::default(), cancel.clone()).unwrap();
             node.execute(rpc::node::Request::SpawnWorker(
                 worker::Config {
-                    listeners: vec!["quic://127.0.0.1:9910".parse().unwrap()],
-                    ..Default::default()
+                    listeners: vec!["quic://[::1]:9910".parse().unwrap()],
+                    ..common::worker_config()
                 },
                 None,
             ))
@@ -82,8 +83,8 @@ async fn main() -> anyhow::Result<()> {
             let mut node = node::spawn(node::Config::default(), cancel.clone()).unwrap();
             node.execute(rpc::node::Request::SpawnWorker(
                 worker::Config {
-                    listeners: vec!["quic://127.0.0.1:9911".parse().unwrap()],
-                    ..Default::default()
+                    listeners: vec!["quic://[::1]:9911".parse().unwrap()],
+                    ..common::worker_config()
                 },
                 None,
             ))
@@ -103,11 +104,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect the leader to workers from the *remote* nodes.
     leader
-        .connect_to_remote_worker("quic://127.0.0.1:9910".parse()?)
+        .connect_to_remote_worker("quic://[::1]:9910".parse()?)
         .await?;
     println!("leader connected to remote worker 9910");
     leader
-        .connect_to_remote_worker("quic://127.0.0.1:9911".parse()?)
+        .connect_to_remote_worker("quic://[::1]:9911".parse()?)
         .await?;
     println!("leader connected to remote worker 9911");
 
@@ -138,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     // TODO: connect as a client to confirm we're able to advance the
     // simulation.
 
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    // tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
     Ok(())
 }

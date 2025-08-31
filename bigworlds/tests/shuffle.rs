@@ -1,35 +1,31 @@
-//! Example showing off shuffling of entities accross workers.
-//!
-//! For the sake of the example we define a situation where entities are
-//! randomly reassigned to a worker on each simulation step.
+//! Tests for shuffling of entities accross workers.
 
 use tokio_util::sync::CancellationToken;
 
 use bigworlds::{
     query::{Description, Filter, Map, Scope},
-    rpc,
-    sim::{self, SimConfig},
-    worker, Executor, Model, Query, Signal,
+    rpc, sim, worker, Executor, Model, Query, Signal,
 };
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// For the sake of simplicity we define a situation where entities are
+/// randomly reassigned to a worker on each simulation step.
+#[tokio::test]
+async fn random_shuffle() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
     let cancel = CancellationToken::new();
 
     // Spawn a local sim instance. It will operate a single worker by itself.
-    let mut config = SimConfig::default();
-    config.worker_count = 1;
-    let mut sim = sim::spawn_with(config, cancel.clone()).await?;
+    let mut sim = sim::spawn_with(common::sim_config_single_worker(), cancel.clone()).await?;
 
     // Manually spawn 2 additional workers and connect them to the leader.
-    let foo_worker = worker::spawn(worker::Config::default(), cancel.clone())?;
+    let foo_worker = worker::spawn(common::worker_config(), cancel.clone())?;
     foo_worker.connect_to_local_leader(&sim.leader).await?;
-    let bar_worker = worker::spawn(worker::Config::default(), cancel.clone())?;
+    let bar_worker = worker::spawn(common::worker_config(), cancel.clone())?;
     bar_worker.connect_to_local_leader(&sim.leader).await?;
 
     // Pull new model and propagate accross cluster.

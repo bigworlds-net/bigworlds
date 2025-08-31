@@ -1,19 +1,15 @@
-//! This example showcases basic simulation nesting.
+//! Tests for simulation nesting.
 
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use bigworlds::{
-    behavior::BehaviorTarget,
-    rpc,
-    sim::{self, SimConfig},
-    Signal,
-};
+use bigworlds::{behavior::BehaviorTarget, rpc, sim, Signal};
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn basic_nesting() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
@@ -22,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let mut sim = sim::spawn_from(
         common::model(),
         None,
-        SimConfig::default(),
+        common::sim_config_single_worker(),
         CancellationToken::new(),
     )
     .await?;

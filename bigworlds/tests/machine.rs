@@ -1,14 +1,20 @@
-//! This example showcases executing custom `machine` logic programmatically.
+//! Here we test executing custom `machine` logic programmatically.
 //!
 //! `machine` is a special kind of `behavior`. It allows executing a set of
 //! predefined commands within a simple state machine regime.
 
 use bigworlds::{machine, rpc, sim};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[allow(unused)]
+mod common;
+
+#[tokio::test]
+async fn machine_execute() -> anyhow::Result<()> {
+    // Initialize logging.
+    env_logger::init();
+
     // Spawn a local simulation instance.
-    let mut sim = sim::spawn().await?;
+    let mut sim = sim::spawn_with_config(common::sim_config_single_worker()).await?;
 
     // Spawn an empty machine.
     let machine = sim.spawn_machine(None, vec![]).await?;

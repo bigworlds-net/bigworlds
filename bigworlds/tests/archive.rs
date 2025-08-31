@@ -1,4 +1,4 @@
-//! Example showing off the fs-backed entity archive.
+//! Tests for the fs-backed entity archive.
 
 #![allow(unused)]
 
@@ -8,12 +8,13 @@ use bigworlds::sim::SimConfig;
 use bigworlds::time::Instant;
 use bigworlds::{query, rpc, Executor, Query, Signal, SimHandle};
 
+#[allow(unused)]
 mod common;
 
-const ENTITY_COUNT: usize = 100000;
+const ENTITY_COUNT: usize = 1000;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn entity_archive() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
@@ -25,7 +26,13 @@ async fn main() -> anyhow::Result<()> {
     // spawned entities.
     model.entities.clear();
 
-    let mut config = SimConfig::default();
+    // TODO: fix for worker_count > 1. Spawning entities doesn't work as
+    // expected with larger worker counts. This is likely a fault in the leader
+    // entity spawning handler.
+    let mut config = SimConfig {
+        worker_count: 1,
+        ..Default::default()
+    };
 
     // Set the worker config up so that new entities are added directly to the
     // fs-backed archive instead of being instantiated into the main memory

@@ -1,45 +1,42 @@
-//! This example showcases attaching custom behavior logic.
+//! Tests for behavior logic and attachment.
 
 use std::time::Duration;
 
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use bigworlds::{
-    behavior::BehaviorHandle,
-    rpc,
-    sim::{self, SimConfig},
-    Result, Signal, SimHandle,
-};
+use bigworlds::{behavior::BehaviorHandle, rpc, sim, Result, Signal, SimHandle};
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn behavior_attachment() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
     let mut sim = sim::spawn_from(
         common::model(),
         None,
-        SimConfig::default(),
+        common::sim_config(),
         CancellationToken::new(),
     )
     .await?;
 
     let cancel_behavior = CancellationToken::new();
-    let _ = spawn_behavior(&mut sim, cancel_behavior.clone()).await?;
-    println!("behavior spawned");
+
+    let _behavior = spawn_behavior(&mut sim, cancel_behavior.clone()).await?;
 
     sim.step_by(5).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Shut down the behavior and then spawn it again.
     cancel_behavior.cancel();
-    let _ = spawn_behavior(&mut sim, CancellationToken::new()).await?;
+
+    let _behavior = spawn_behavior(&mut sim, CancellationToken::new()).await?;
 
     // Respawned behavior will continue executing the same logic, but note that
-    // whatever local state it had, it's now lost.
+    // whatever local state it had is now lost.
 
     sim.step_by(5).await?;
 
@@ -51,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 /// Shorthand for spawning certain closure-defined behavior on the provided
 /// sim instance.
 async fn spawn_behavior(sim: &mut SimHandle, cancel: CancellationToken) -> Result<BehaviorHandle> {
-    sim
+    let behavior = sim
         // Spawn a behavior.
         //
         // Behavior is code that runs in it's own task on the runtime.
@@ -62,8 +59,8 @@ async fn spawn_behavior(sim: &mut SimHandle, cancel: CancellationToken) -> Resul
         .spawn_behavior_synced(
             |mut stream, _worker| {
                 Box::pin(async move {
-                    // State can be persisted as long as the behavior task
-                    // is alive. In this example we forgo 
+                    // State is persisted only as long as the behavior task
+                    // is alive. 
                     let mut processed_event_count = 0;
 
                     loop {
@@ -91,5 +88,7 @@ async fn spawn_behavior(sim: &mut SimHandle, cancel: CancellationToken) -> Resul
             bigworlds::behavior::BehaviorTarget::Worker,
             vec!["step".parse().unwrap()],
         )
-        .await
+        .await?;
+
+    Ok(behavior)
 }

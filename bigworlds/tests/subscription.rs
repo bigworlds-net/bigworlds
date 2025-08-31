@@ -1,4 +1,4 @@
-//! Subscription example.
+//! Testing subscription queries.
 
 use std::time::Duration;
 
@@ -12,10 +12,11 @@ use bigworlds::{
     Query, QueryProduct,
 };
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn subscription_stream() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
@@ -29,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
                 // listeners: vec!["127.0.0.1:9123".parse()?],
                 ..Default::default()
             }),
-            ..Default::default()
+            ..common::sim_config_single_worker()
         },
         CancellationToken::new(),
     )

@@ -1,26 +1,33 @@
-//! Small showcase of the model-based logic hot-swapping functionality.
+//! Tests for the hot-swapping functionality of model-based logic.
 //!
 //! Model-based means we utilize the ability to mutate the global model at
 //! runtime and expect some side-effects to take place, such as the respawning
 //! of the behavior tasks.
 //!
-//!
 //! # Non-model-based swapping
 //!
 //! Hot-swapping logic for arbitrary behaviors we hold handles to is easier
-//! still, see the `behavior` example.
+//! still, see `tests/behavior.rs`.
 
 use bigworlds::model::behavior::BehaviorInner;
+use tokio_util::sync::CancellationToken;
 
+#[allow(unused)]
 mod common;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[tokio::test]
+async fn hotswap_model_logic() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
     // Spawn local sim instance and keep the handle.
-    let mut sim = bigworlds::sim::spawn_from_model(common::model()).await?;
+    let mut sim = bigworlds::sim::spawn_from(
+        common::model(),
+        None,
+        common::sim_config_single_worker(),
+        CancellationToken::new(),
+    )
+    .await?;
 
     sim.step_by(3).await?;
 
@@ -45,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     sim.pull_model(model).await?;
 
     // We should now be running the changed lua behaviors.
+    // TODO: asserts.
     sim.step_by(3).await?;
 
     Ok(())

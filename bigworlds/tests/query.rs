@@ -1,4 +1,4 @@
-//! Simple example showing off the querying mechanism.
+//! Tests of the querying mechanism.
 
 use tokio_util::sync::CancellationToken;
 
@@ -10,8 +10,12 @@ use bigworlds::sim::SimConfig;
 use bigworlds::{model, ServerConfig, Signal, Var, VarType};
 use bigworlds::{rpc, Executor, Model, Query, QueryProduct};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[allow(unused)]
+mod common;
+
+// TODO: resolve issue with client unable to connect.
+#[tokio::test]
+async fn client_net_query() -> anyhow::Result<()> {
     // Initialize logging.
     env_logger::init();
 
@@ -20,10 +24,10 @@ async fn main() -> anyhow::Result<()> {
     let mut sim = bigworlds::sim::spawn_with(
         SimConfig {
             server: Some(ServerConfig {
-                listeners: vec!["127.0.0.1:9123".parse()?],
+                listeners: vec!["quic://[::1]:9123".parse()?],
                 ..Default::default()
             }),
-            ..Default::default()
+            ..common::sim_config_single_worker()
         },
         CancellationToken::new(),
     )
@@ -122,8 +126,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
+    println!("before connected");
     // Connect to the cluster through the client interface.
-    let mut client = Client::connect("127.0.0.1:9123".parse()?, client::Config::default()).await?;
+    let mut client =
+        Client::connect("quic://[::1]:9123".parse()?, client::Config::default()).await?;
+
+    println!("connected");
 
     // Specify the query. We only want entities with health and stamina values
     // in the specified range. We also make sure to only return stamina values

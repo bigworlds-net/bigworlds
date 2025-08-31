@@ -1,12 +1,125 @@
 use bigworlds::{
+    leader,
     model::{
         behavior::{Behavior, BehaviorInner, InstancingTarget},
         Component, Entity, PrefabModel, Var as VarModel,
     },
-    Model, Var, VarType,
+    server,
+    sim::SimConfig,
+    worker, Model, SimHandle, Var, VarType,
 };
+use itertools::Itertools;
+use tokio_util::sync::CancellationToken;
 
-/// Simple model definition for demonstration purposes.
+/// Generates a new cluster of certain size with nodes organized into a ring.
+///
+/// # Notes
+///
+/// Since the leader is required for handling certain operations, putting it
+/// on a ring and having workers access it via other workers' proxying the
+/// request, can be quite inefficient.
+///
+/// Changing up the classic ring topology a little and introducing one or more
+/// cross-ring connections may be desirable.
+///
+/// # Diagram
+///
+/// ```ignore
+///      #l
+///   #w6 \ #w0
+/// #w5  / \  #w1
+///   #w4   #w2
+///      #w3s
+///
+/// # == participant on the ring
+/// l == leader
+/// w == worker
+/// s == server
+/// \ == optional cross-ring connections
+///
+/// ```
+pub async fn ring_cluster(size: usize) -> anyhow::Result<(leader::Handle, Vec<worker::Handle>)> {
+    let cancel = CancellationToken::new();
+
+    // Spawn leader.
+    let mut leader = leader::spawn(Default::default(), cancel.clone())?;
+
+    // Spawn workers.
+    let mut workers = vec![];
+    for _ in 0..size {
+        let worker = worker::spawn(worker_config(), cancel.clone())?;
+        workers.push(worker);
+    }
+
+    // Connect all workers iterating forward.
+    for (a, b) in workers.iter().tuple_windows() {
+        a.connect_to_local_worker(b).await?;
+    }
+
+    // Close the ring by connecting the leader to first and last worker.
+    leader
+        .connect_to_local_worker(workers.first().unwrap(), true)
+        .await?;
+    leader
+        .connect_to_local_worker(workers.last().unwrap(), true)
+        .await?;
+
+    // Establish a server with one of the workers.
+    // let server = server::spawn(Default::default(), cancel.clone())?;
+    // server.connect_to_worker(&worker_3, true).await?;
+
+    Ok((leader, workers))
+}
+
+/// Generates a new cluster of certain size with nodes organized into a star.
+/// Leader is the central node and is connected to all workers. Every worker
+/// is directly connected only to the central leader and none of the other
+/// workers.
+///
+/// Cluster size describes the number of workers.
+pub async fn star_cluster(size: usize) -> anyhow::Result<(leader::Handle, Vec<worker::Handle>)> {
+    let cancel = CancellationToken::new();
+
+    // Spawn leader.
+    let leader = leader::spawn(Default::default(), cancel.clone())?;
+
+    // Spawn workers.
+    let mut workers = vec![];
+    for _ in 0..size {
+        // Disable entity archive for faster startup times.
+        let worker = worker::spawn(worker_config(), cancel.clone())?;
+        // Connect to leader.
+        worker.connect_to_local_leader(&leader).await?;
+
+        workers.push(worker);
+    }
+
+    Ok((leader, workers))
+}
+
+/// Common test-friendly configuration for the local sim instance.
+pub fn sim_config() -> SimConfig {
+    SimConfig {
+        worker: worker_config(),
+        ..Default::default()
+    }
+}
+
+pub fn sim_config_single_worker() -> SimConfig {
+    SimConfig {
+        worker_count: 1,
+        worker: worker_config(),
+        ..Default::default()
+    }
+}
+
+/// Common test-friendly configuration for the worker.
+pub fn worker_config() -> worker::Config {
+    // Disable entity archive for faster startup times.
+    worker::Config::no_archive()
+}
+
+/// Simple model definition for testing purposes.
 ///
 /// # Model contents
 ///
