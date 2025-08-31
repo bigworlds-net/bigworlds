@@ -114,9 +114,23 @@ impl Model {
                 for behavior in &mut include_model.behaviors {
                     if behavior.r#type.as_str() == "rust" {
                         if behavior.debug {
-                            behavior.lib = format!("target/debug/lib{}.so", behavior.name);
+                            #[cfg(target_os = "windows")]
+                            {
+                                behavior.lib = format!("target/debug/{}.dll", behavior.name);
+                            }
+                            #[cfg(target_os = "linux")]
+                            {
+                                behavior.lib = format!("target/debug/lib{}.so", behavior.name);
+                            }
                         } else {
-                            behavior.lib = format!("target/release/lib{}.so", behavior.name);
+                            #[cfg(target_os = "windows")]
+                            {
+                                behavior.lib = format!("target/release/{}.dll", behavior.name);
+                            }
+                            #[cfg(target_os = "linux")]
+                            {
+                                behavior.lib = format!("target/release/lib{}.so", behavior.name);
+                            }
                         }
                     }
 

@@ -2,6 +2,7 @@ use std::{
     fs::File,
     hash::Hash,
     io::{Read, Write},
+    path::Path,
 };
 
 use libloading::Library;
@@ -23,26 +24,20 @@ pub fn spawn(
     proc_tx: tokio::sync::broadcast::Sender<rpc::behavior::Request>,
 ) -> Result<(Library, Option<BehaviorHandle>)> {
     // Save the library to disk at a predetermined location.
-    let lib_path = format!(
-        "{}/.bigworlds/{}",
-        // TODO: apparently this is deprecated.
-        std::env::home_dir()
-            .ok_or(Error::Other("unable to find home dir".to_owned()))?
-            .to_string_lossy(),
-        name
-    );
+    let lib_path = format!("./.bigworlds/artifacts/{}.so", name);
+    #[cfg(target_os = "windows")]
+    let lib_path = format!("./.bigworlds/artifacts/{}.dll", name);
+    #[cfg(target_os = "linux")]
+    let lib_path = format!("./.bigworlds/artifacts/{}.so", name);
     debug!(
         "opening at lib_path: {}, truncating (rewriting) existing artifact if it exists",
         lib_path
     );
 
-    // TODO! rewriting existing artifacts creates issues when having multiple
-    // workers.
-
-    // TODO: figure out a clever way to perhaps not replace it
-    // everytime, or at least provide some config variable for
-    // controlling this behavior.
     if !std::fs::exists(&lib_path)? {
+        if let Some(parent_dir) = Path::new(&lib_path).parent() {
+            std::fs::create_dir_all(parent_dir)?;
+        }
         File::create(&lib_path)
             .unwrap()
             .write_all(&artifact.bytes)
