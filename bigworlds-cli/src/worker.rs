@@ -151,7 +151,7 @@ pub async fn start(matches: &ArgMatches, cancel: CancellationToken) -> Result<()
             .ctl
             .execute(bigworlds::Signal::new(
                 rpc::worker::Request::ConnectToLeader(leader_addr).into(),
-                None,
+                Context::default(),
             ))
             .await
         {

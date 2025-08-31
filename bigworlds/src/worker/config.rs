@@ -72,6 +72,20 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Convenience constructor setting up a default config with the entity
+    /// archive functionality explicitly disabled.
+    pub fn no_archive() -> Self {
+        Self {
+            partition: super::part::Config {
+                enable_archive: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+}
+
 /// Strategy the worker will pursue in terms of connecting directly to other
 /// workers.
 ///

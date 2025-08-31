@@ -23,6 +23,56 @@ pub mod machine;
 
 pub mod msg;
 
+/// Wraps request along with call context for tracking destinations and timing.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Signal<T> {
+    pub payload: T,
+    pub ctx: Context,
+}
+
+/// Basic conversion implementation for creating context-less cluster signals.
+impl<T> From<T> for Signal<T> {
+    fn from(payload: T) -> Self {
+        Self {
+            payload,
+            ctx: Context::new(Caller::Unknown),
+        }
+    }
+}
+
+impl<T> Signal<T> {
+    pub fn new(payload: T, ctx: Context) -> Self {
+        Self { payload, ctx }
+    }
+
+    /// Convenience function for providing default context while also explicitly
+    /// specifying signal origin.
+    pub fn originating_at(mut self, caller: Caller) -> Self {
+        self.ctx.origin = caller;
+        self
+    }
+
+    pub fn with_target(mut self, target: Participant) -> Self {
+        self.ctx.target = Some(target);
+        self
+    }
+
+    /// Returns the embedded payload discarding context.
+    pub fn into_payload(self) -> T {
+        self.payload
+    }
+
+    /// Same as `into_payload` but carries the significance of discarding the context.
+    pub fn discard_context(self) -> T {
+        self.payload
+    }
+
+    /// Returns the context discarding the payload.
+    pub fn into_context(self) -> Context {
+        self.ctx
+    }
+}
+
 /// Listing of all possible cluster parties along with their ids.
 // TODO: not really rpc-specific, maybe move elsewhere.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -30,6 +80,8 @@ pub enum Participant {
     Leader,
     Worker(WorkerId),
     Server(ServerId),
+    // TODO: consider removing client, it doesn't really participate in the
+    // inner cluster.
     Client(ClientId),
 }
 
@@ -49,7 +101,7 @@ impl TryFrom<Caller> for Participant {
 
 /// Listing of all possible callers. Includes cluster participants as well as
 /// any additional constructs able to issue calls.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, strum::Display, Default, PartialEq, Serialize, Deserialize)]
 pub enum Caller {
     Participant(Participant),
     SimHandle,
@@ -83,18 +135,33 @@ impl Caller {
     }
 }
 
+/// Abstracts over a single instance of the call being observed by cluster
+/// participant.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NetworkHop {
     /// Identifier of the participant that obeserved and registered the
     /// network hop.
     pub observer: Participant,
     /// Time between original issuing of the call and registering of this hop,
-    /// expressed as milliseconds.
+    /// expressed in milliseconds.
     ///
-    /// NOTE: with `u32::MAX / 1000000` at around 65, max supported delta here is
-    /// slightly over a minute. For hops taking more than a minute we should
-    /// expect inacurate total time counts for signals.
+    /// We store it this way because we want to both have micro-second level
+    /// measurement and save space by not doing u64.
+    ///
+    /// NOTE: with `u32::MAX / 1000000` at around 65, max supported delta here
+    /// is slightly over a minute. This is currently the hard limit for call
+    /// timings.
+    ///
+    // NOTE: storing delta time between hops was considered but it appeared to
+    // become unwieldy with more complex non-seqeuential broadcast patterns.
     pub delta_time_micros: u32,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum Delivery {
+    #[default]
+    Unlimited,
+    Limited(u8),
 }
 
 /// Describes additional information about the call as it passes through the
@@ -111,8 +178,19 @@ pub struct NetworkHop {
 /// This way the caller as well as different participants processing an
 /// in-flight call can make informed judgements about routing, state of the
 /// network, etc.
+// TODO: consider changing the name to `CallInfo` or similar.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Context {
+    /// Unique identifier of the call.
+    pub id: Uuid,
+
+    /// Delivery strategy for the call.
+    ///
+    /// Different types of cluster operations can require varying kinds of
+    /// delivery limits. For example with epidemic broadcast we need to make
+    /// sure each call is only processed once.
+    pub delivery: Delivery,
+
     /// Identifier of the original calling party.
     pub origin: Caller,
     /// Explicit target of the call. This is not always defined, e.g. when
@@ -130,6 +208,8 @@ pub struct Context {
 impl Context {
     pub fn new(origin: Caller) -> Self {
         Self {
+            id: Uuid::new_v4(),
+            delivery: Delivery::default(),
             origin,
             target: None,
             initiated_at: Utc::now().timestamp_micros() as u64,
@@ -137,6 +217,21 @@ impl Context {
         }
     }
 
+    pub fn delivery(mut self, limit: Option<u8>) -> Self {
+        if let Some(limit) = limit {
+            self.delivery = Delivery::Limited(limit);
+        } else {
+            self.delivery = Delivery::Unlimited;
+        }
+        self
+    }
+
+    /// Returns the last known participant observer.
+    pub fn last_observer(&self) -> Option<&Participant> {
+        self.hops.last().map(|hop| &hop.observer)
+    }
+
+    /// Registers network hop with a particular participant observer.
     pub fn register_hop(mut self, observer: Participant) -> Self {
         // Calculate time since original initiation, then substract total time
         // so far.
@@ -150,13 +245,56 @@ impl Context {
         self
     }
 
-    /// Calculates total time spent on all the network hops.
-    pub fn total_transfer_time_micros(&self) -> u32 {
-        let mut total = 0;
-        for hop in &self.hops {
-            total += hop.delta_time_micros as u32;
+    /// Merges incoming list of hops into the current context.
+    pub fn merge_hops(&mut self, other: &Vec<NetworkHop>) {
+        self.hops
+            .extend(other.iter().skip(self.hops.len()).cloned());
+    }
+
+    pub fn merge_hops_unique(&mut self, other: &Vec<NetworkHop>) {
+        for other_hop in other {
+            if !self
+                .hops
+                .iter()
+                .any(|hop| hop.observer == other_hop.observer)
+            {
+                self.hops.push(other_hop.clone());
+            }
         }
-        total
+    }
+
+    /// Merges incoming list of hops into the current context based on timings.
+    pub fn merge_hops_timebased(&mut self, other: &Vec<NetworkHop>) {
+        // Find the largest delta time.
+        let mut largest = 0;
+        for hop in &self.hops {
+            if hop.delta_time_micros > largest {
+                largest = hop.delta_time_micros;
+            }
+        }
+
+        // Find other hops larger than largest. This way we're only merging in
+        // hops that happened after the last hop on the self.
+        for other_hop in other {
+            if other_hop.delta_time_micros > largest {
+                // Add the other hop on the self.
+                self.hops.push(other_hop.to_owned());
+            }
+        }
+    }
+
+    pub fn clear_hops(mut self) -> Self {
+        self.hops.clear();
+        self
+    }
+
+    /// Returns total transfer time by reading the delta of the last hop.
+    pub fn total_transfer_time_micros(&self) -> u32 {
+        if let Some(last) = self.hops.last() {
+            last.delta_time_micros
+        } else {
+            0
+        }
     }
 
     /// Checks whether the origin or registered observers of the signal include
@@ -203,11 +341,26 @@ impl Context {
     }
 
     /// Counts number of hops where observers were workers.
+    ///
+    /// NOTE: the original caller is not included in the total hop count.
     pub fn worker_hop_count(&self) -> usize {
         self.hops
             .iter()
             .filter(|hop| {
                 if let Participant::Worker(_) = hop.observer {
+                    true
+                } else {
+                    false
+                }
+            })
+            .count()
+    }
+
+    pub fn leader_hop_count(&self) -> usize {
+        self.hops
+            .iter()
+            .filter(|hop| {
+                if let Participant::Leader = hop.observer {
                     true
                 } else {
                     false
@@ -225,81 +378,5 @@ impl Context {
         } else {
             false
         }
-    }
-}
-
-pub type SignalId = Uuid;
-
-/// Call wrapper with additional context for tracking destinations and timing.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Signal<T> {
-    pub id: SignalId,
-    pub payload: T,
-    pub ctx: Option<Context>,
-}
-
-/// Basic conversion implementation for creating context-less cluster signals.
-impl<T> From<T> for Signal<T> {
-    fn from(payload: T) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            payload,
-            ctx: None,
-        }
-    }
-}
-
-impl<T> Signal<T> {
-    pub fn new(payload: T, ctx: Option<Context>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            payload,
-            ctx,
-        }
-    }
-
-    /// Convenience function for providing default context while also explicitly
-    /// specifying signal origin.
-    pub fn originating_at(mut self, caller: Caller) -> Self {
-        match self.ctx {
-            Some(ref mut ctx) => ctx.origin = caller,
-            None => {
-                self.ctx = Some(Context {
-                    origin: caller,
-                    initiated_at: chrono::Utc::now().timestamp_micros() as u64,
-                    ..Default::default()
-                })
-            }
-        }
-        self
-    }
-
-    pub fn with_target(mut self, target: Participant) -> Self {
-        match self.ctx {
-            Some(ref mut ctx) => ctx.target = Some(target),
-            None => {
-                self.ctx = Some(Context {
-                    target: Some(target),
-                    initiated_at: chrono::Utc::now().timestamp_micros() as u64,
-                    ..Default::default()
-                })
-            }
-        }
-        self
-    }
-
-    /// Returns the embedded payload discarding context.
-    pub fn into_payload(self) -> T {
-        self.payload
-    }
-
-    /// Same as `into_payload` but carries the significance of discarding the context.
-    pub fn discard_context(self) -> T {
-        self.payload
-    }
-
-    /// Returns the context discarding the payload.
-    pub fn into_context(self) -> Option<Context> {
-        self.ctx
     }
 }

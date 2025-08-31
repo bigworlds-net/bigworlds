@@ -318,6 +318,7 @@ impl Command {
             // Command::Extend(cmd) => out_res.push(cmd.execute_loc()),
             // // Command::Register(cmd) => out_res.extend(cmd.execute_loc(call_stack)),
             // Command::Range(cmd) => out_res.push(cmd.execute_loc(ent_storage, comp_name, location)),
+            Command::NoOp => CommandResult::Continue,
             _ => {
                 warn!("unable to execute cmd: {:?}", self);
                 CommandResult::Continue

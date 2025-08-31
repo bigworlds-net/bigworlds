@@ -355,7 +355,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
 
 async fn handle_local_ctl_request(
     req: rpc::server::RequestLocal,
-    ctx: Option<rpc::Context>,
+    ctx: rpc::Context,
     mut server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     match req {
@@ -392,7 +392,7 @@ async fn handle_local_ctl_request(
 /// Controller handler dealing with requests sent through the worker handle.
 async fn handle_ctl_request(
     req: rpc::server::Request,
-    ctx: Option<rpc::Context>,
+    ctx: rpc::Context,
     mut server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     use rpc::server::{Request as ServerRequest, Response as ServerResponse};
@@ -415,7 +415,7 @@ async fn handle_ctl_request(
 /// an in-process channel.
 async fn handle_local_worker_request(
     req: rpc::server::RequestLocal,
-    ctx: Option<rpc::Context>,
+    ctx: rpc::Context,
     server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     match req {
@@ -432,7 +432,7 @@ async fn handle_local_worker_request(
             ))
         }
         rpc::server::RequestLocal::Request(req) => {
-            let worker_id = ctx.as_ref().map(|c| c.origin.id());
+            let worker_id = ctx.origin.id();
             handle_worker_request(req, ctx, worker_id, server).await
         }
         _ => todo!(),
@@ -441,8 +441,8 @@ async fn handle_local_worker_request(
 
 async fn handle_worker_request(
     req: rpc::server::Request,
-    ctx: Option<rpc::Context>,
-    worker_id: Option<WorkerId>,
+    ctx: rpc::Context,
+    worker_id: WorkerId,
     server: Arc<Mutex<State>>,
 ) -> Result<Signal<rpc::server::Response>> {
     debug!("server: handling worker request: {req}");

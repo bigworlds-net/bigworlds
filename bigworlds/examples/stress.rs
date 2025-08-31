@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
                                     let resp = exec
                                         .execute(Signal::new(
                                             rpc::worker::Request::ProcessQuery(query.clone()),
-                                            Some(rpc::Context::new(rpc::Caller::Behavior)),
+                                            rpc::Context::new(rpc::Caller::Behavior),
                                         ))
                                         .await??;
                                     println!(

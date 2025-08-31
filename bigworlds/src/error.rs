@@ -4,6 +4,7 @@ use std::num::ParseIntError;
 use std::ops::Deref;
 
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::entity::StorageIndex;
 use crate::net::Transport;
@@ -181,9 +182,6 @@ pub enum Error {
     #[error("timed out")]
     Timeout,
 
-    #[error("signal context required: {0}")]
-    ContextRequired(String),
-
     #[error("archive functionality disabled")]
     ArchiveDisabled,
 
@@ -196,6 +194,9 @@ pub enum Error {
     #[cfg(feature = "archive")]
     #[error("rkyv error: {0}")]
     RkyvError(String),
+
+    #[error("already processed signal with id: {0}")]
+    AlreadyProcessedSignal(Uuid),
 }
 
 impl From<fjall::Error> for Error {

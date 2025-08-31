@@ -11,7 +11,7 @@ use super::worker;
 
 pub type Token = uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, strum::Display)]
 pub enum RequestLocal {
     /// Introduce worker to leader with local channel.
     ///
@@ -92,14 +92,15 @@ pub enum Request {
     ///
     /// This can be used by workers that are only connected to the leader
     /// and not directly to other workers.
-    // Broadcast(super::worker::Request),
+    WorkerBroadcast(super::worker::Request),
 
-    /// Pass a worker request to one of the connected workers selected
-    /// at random.
+    /// Pass a worker request to one of the connected workers.
+    ///
+    /// If worker id is not provided target worker is selected at random.
     ///
     /// This can be used by workers that are only connected to the leader
     /// and not directly to other workers.
-    WorkerProxy(Box<super::worker::Request>),
+    WorkerProxy(Box<super::worker::Request>, Option<WorkerId>),
 
     /// Request the leader to calculate migration tresholds and potentially
     /// migrate entities.
@@ -137,7 +138,7 @@ pub enum Response {
 
     StepUntil,
 
-    // Broadcast(super::worker::Response),
+    WorkerBroadcast(Vec<super::worker::Response>),
     WorkerProxy(super::worker::Response),
 }
 

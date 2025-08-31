@@ -12,11 +12,12 @@ pub use handle::Handle;
 
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use fnv::FnvHashMap;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Mutex};
 use tokio::task::JoinSet;
 use tokio_stream::{StreamExt, StreamMap};
 use tokio_util::sync::CancellationToken;
@@ -30,7 +31,7 @@ use crate::model::behavior::BehaviorInner;
 use crate::net::{CompositeAddress, ConnectionOrAddress, Encoding};
 use crate::query::{self, Trigger};
 use crate::rpc::worker::{Request, RequestLocal, Response};
-use crate::rpc::{Participant, Signal, SignalId};
+use crate::rpc::{Delivery, Participant, Signal};
 use crate::server::{ServerExec, ServerId};
 use crate::util::{decode, encode};
 use crate::worker::manager::ManagerExec;
@@ -121,7 +122,7 @@ pub struct State {
     /// from different connected participants.
     // TODO: consider storing additional information about the signal as part
     // of cluster intelligence for further optimization.
-    pub recent_signals: FnvHashMap<SignalId, u64>,
+    pub recent_signals: FnvHashMap<Uuid, u64>,
 }
 
 /// Creates a new `Worker` task on the current runtime.
@@ -230,32 +231,59 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
     let cancel_ = cancel.clone();
     let manager_ = manager.clone();
     tokio::spawn(async move {
+        let seen_calls = Arc::new(Mutex::new(FnvHashMap::<Uuid, (u8, u32)>::default()));
+
         loop {
             let worker = manager_.clone();
             let local_behavior_executor = local_behavior_executor_c.clone();
             let net_exec = net_executor.clone();
             let cancel = cancel_.clone();
+            let seen_calls = seen_calls.clone();
 
             tokio::select! {
                 Some((source, (sig, sender))) = local_streams.next() => {
+                    let mut seen_calls = seen_calls.lock().await;
+                    if let Some((count, last_time)) = seen_calls.get(&sig.ctx.id) {
+                        if let Delivery::Limited(times) = sig.ctx.delivery {
+                            if *count >= times {
+                                sender.send(Err(Error::AlreadyProcessedSignal(sig.ctx.id)));
+                                continue;
+                            }
+                        }
+                    } else {
+                        // TODO: insert proper timestamp.
+                        seen_calls.insert(sig.ctx.id, (1, 0));
+                    }
+
                     tokio::spawn(async move {
                         debug!("worker: processing local signal from `{}`: request: {}, ctx: {:?}", source, sig.payload, sig.ctx);
-                        let ctx = sig.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                        let ctx = sig.ctx.register_hop(Participant::Worker(id));
                         let resp = handle_local_request(sig.payload, ctx, worker, local_behavior_executor, net_exec, None, cancel).await;
-                        let resp = resp.map(|mut r| {
-                            r.ctx = r.ctx.map(|c| c.register_hop(Participant::Worker(id)));
-                            r
-                        });
+
+                        // let resp = resp.map(|mut r| {
+                        //         r.ctx = r.ctx.map(|c| if c.hops.last().unwrap().observer == Participant::Worker(id) {
+                        //                 c
+                        //             } else {
+                        //                 c.register_hop(Participant::Worker(id))
+                        //             }
+                        //         );
+                        //     r
+                        // });
                         sender.send(resp);
                     });
                 },
                 Some((source, (sig, sender))) = local_streams_multi.next() => {
+                    if seen_calls.lock().await.contains_key(&sig.ctx.id) {
+                        sender.send(Err(Error::AlreadyProcessedSignal(sig.ctx.id)));
+                        continue;
+                    }
+
                     tokio::spawn(async move {
                         println!("worker: processing local signal (multi response) from `{}`: request: {}, ctx: {:?}", source, sig.payload, sig.ctx);
-                        let ctx = sig.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                        let ctx = sig.ctx.register_hop(Participant::Worker(id));
                         let resp = handle_local_request(sig.payload, ctx, worker, local_behavior_executor, net_exec, Some(sender.clone()), cancel).await;
                         let resp = resp.map(|mut r| {
-                            r.ctx = r.ctx.map(|c| c.register_hop(Participant::Worker(id)));
+                            r.ctx = r.ctx.register_hop(Participant::Worker(id));
                             r
                         });
                         println!("worker: sending resp: {:?}", resp);
@@ -263,6 +291,11 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                     });
                 },
                 Some((sig, sender)) = local_behavior_stream.next() => {
+                    if seen_calls.lock().await.contains_key(&sig.ctx.id) {
+                        sender.send(Err(Error::AlreadyProcessedSignal(sig.ctx.id)));
+                        continue;
+                    }
+
                     tokio::spawn(async move {
                         let resp = handle_request(
                             sig.payload,
@@ -276,7 +309,12 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                         sender.send(resp);
                     });
                 },
-                Some((sig, s)) = local_behavior_stream_multi.next() => {
+                Some((sig, sender)) = local_behavior_stream_multi.next() => {
+                    if seen_calls.lock().await.contains_key(&sig.ctx.id) {
+                        sender.send(Err(Error::AlreadyProcessedSignal(sig.ctx.id)));
+                        continue;
+                    }
+
                     tokio::spawn(async move {
                         let resp = handle_request(
                             sig.payload,
@@ -284,13 +322,13 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                             worker,
                             local_behavior_executor,
                             net_exec.clone(),
-                            Some(s.clone()),
+                            Some(sender.clone()),
                             cancel
                         ).await;
-                        s.send(resp).await;
+                        sender.send(resp).await;
                     });
                 },
-                Some(((maybe_con, req), s)) = net_stream.next() => {
+                Some(((maybe_con, req), sender)) = net_stream.next() => {
                     tokio::spawn(async move {
                         let sig: Signal<Request> = match decode(&req, Encoding::Bincode) {
                             Ok(r) => r,
@@ -299,9 +337,16 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
                                 return;
                             }
                         };
+
+                        if seen_calls.lock().await.contains_key(&sig.ctx.id) {
+                            let result: Result<Signal<Response>> = Err(Error::AlreadyProcessedSignal(sig.ctx.id));
+                            sender.send(encode(result, Encoding::Bincode).unwrap());
+                            return;
+                        }
+
                         debug!("worker: processing network signal from {}: request: {}, ctx: {:?}", maybe_con, sig.payload, sig.ctx);
                         let resp = handle_net_request(sig.payload, sig.ctx, worker.clone(), maybe_con, local_behavior_executor, net_exec, cancel).await;
-                        s.send(encode(resp, Encoding::Bincode).unwrap()).unwrap();
+                        sender.send(encode(resp, Encoding::Bincode).unwrap()).unwrap();
                     });
                 },
                 // TODO: multi-response net stream.
@@ -480,7 +525,7 @@ pub fn spawn(config: Config, mut cancel: CancellationToken) -> Result<Handle> {
 
 async fn handle_local_request(
     req: RequestLocal,
-    ctx: Option<rpc::Context>,
+    ctx: rpc::Context,
     manager: ManagerExec,
     behavior_exec: LocalExec<Signal<Request>, Result<Signal<Response>>>,
     net_exec: LocalExec<(ConnectionOrAddress, Vec<u8>), Vec<u8>>,
@@ -494,10 +539,7 @@ async fn handle_local_request(
             _worker_leader
                 .execute(Signal::new(
                     rpc::leader::RequestLocal::ConnectAndRegisterWorker(leader_worker),
-                    Some(
-                        ctx.clone()
-                            .unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
-                    ),
+                    ctx.clone(),
                 ))
                 .await??;
 
@@ -567,7 +609,7 @@ async fn handle_local_request(
         }
         RequestLocal::ConnectToWorker(outgoing, incoming) => {
             let my_id = manager.get_id().await?;
-            let ctx = ctx.map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+            let ctx = ctx.register_hop(Participant::Worker(my_id));
 
             let sig = outgoing
                 .execute(Signal::new(
@@ -575,17 +617,26 @@ async fn handle_local_request(
                     ctx,
                 ))
                 .await??;
-            let _ = sig.payload.empty()?;
 
-            let ctx = sig
-                .ctx
-                .map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+            if let Response::IntroduceWorker(other_worker_id) = sig.payload {
+                // TODO: ?
+                let ctx = sig.ctx.register_hop(Participant::Worker(my_id));
 
-            Ok(Signal::new(Response::Empty, ctx))
+                let worker = OtherWorker {
+                    id: other_worker_id,
+                    situation: WorkerSituation::Connected(WorkerExec::Local(outgoing)),
+                    listeners: vec![],
+                };
+                manager.add_other_worker(worker).await?;
+
+                Ok(Signal::new(Response::Empty, ctx))
+            } else {
+                Err(Error::UnexpectedResponse(format!("{}", sig.payload)))
+            }
         }
         RequestLocal::IntroduceWorker(id, incoming) => {
             let my_id = manager.get_id().await?;
-            let ctx = ctx.map(|ctx| ctx.register_hop(Participant::Worker(my_id)));
+            let ctx = ctx.register_hop(Participant::Worker(my_id));
 
             let worker = OtherWorker {
                 id,
@@ -594,7 +645,7 @@ async fn handle_local_request(
             };
             manager.add_other_worker(worker).await?;
 
-            Ok(Signal::new(Response::Empty, ctx))
+            Ok(Signal::new(Response::IntroduceWorker(my_id), ctx))
         }
         RequestLocal::AddBehavior(target, handle) => {
             manager.add_behavior(target, handle).await?;
@@ -614,7 +665,7 @@ async fn handle_local_request(
 /// context on the incoming request.
 async fn handle_net_request(
     req: rpc::worker::Request,
-    ctx: Option<rpc::Context>,
+    ctx: rpc::Context,
     manager: ManagerExec,
     maybe_con: ConnectionOrAddress,
     behavior_exec: LocalExec<Signal<Request>, Result<Signal<Response>>>,
@@ -731,7 +782,7 @@ async fn handle_net_request(
 
 async fn handle_request(
     req: rpc::worker::Request,
-    mut ctx: Option<rpc::Context>,
+    mut ctx: rpc::Context,
     manager: ManagerExec,
     behavior_exec: LocalExec<Signal<Request>, Result<Signal<Response>>>,
     net_exec: LocalExec<(ConnectionOrAddress, Vec<u8>), Vec<u8>>,
@@ -748,7 +799,7 @@ async fn handle_request(
             Ok(Signal::new(Response::Empty, ctx))
         }
         Request::ConnectToLeader(address) => {
-            let bind = SocketAddr::from_str("0.0.0.0:0").unwrap();
+            let bind = SocketAddr::from_str("[::]:0").unwrap();
             // let endpoint = quinn::Endpoint::client(a).unwrap();
             trace!("worker: connecting to leader: {:?}", address);
             let endpoint = net::quic::make_client_endpoint_insecure(bind).unwrap();
@@ -905,9 +956,6 @@ async fn handle_request(
 
             // Process step-trigered subscriptions.
             let subs = manager.get_subscriptions().await?;
-            let mut ctx = ctx.unwrap_or(Context::new(
-                Participant::Worker(manager.get_id().await?).into(),
-            ));
             for sub in subs {
                 if !sub.triggers.contains(&Trigger::StepEvent) {
                     continue;
@@ -920,7 +968,7 @@ async fn handle_request(
             }
 
             trace!("worker processed step");
-            Ok(Signal::new(Response::Step, Some(ctx)))
+            Ok(Signal::new(Response::Step, ctx))
         }
         Request::Initialize => {
             trace!(">>> worker: initializing");
@@ -952,12 +1000,7 @@ async fn handle_request(
             let my_id = manager.get_id().await?;
             // Send request to leader.
             let req = rpc::leader::Request::ReplaceModel(model);
-            let resp = send_to_leader(
-                req,
-                manager,
-                ctx.unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
-            )
-            .await?;
+            let resp = send_to_leader(req, manager, ctx).await?;
             Ok(Signal::new(Response::Empty, resp.ctx))
         }
         Request::MergeModel(model) => {
@@ -1022,7 +1065,7 @@ async fn handle_request(
                         for handle in handles.iter().filter(|handle| handle.name == name) {
                             // println!("shutting down old behavior");
                             handle
-                                .execute(Signal::new(rpc::behavior::Request::Shutdown, None))
+                                .execute(Signal::new(rpc::behavior::Request::Shutdown, ctx.clone()))
                                 .await??;
 
                             if let Some(new_behavior) =
@@ -1080,7 +1123,6 @@ async fn handle_request(
         Request::Subscribe(trigger, query) => {
             if let Some(multi) = multi {
                 let id = manager.subscribe(trigger, query, multi).await?;
-                println!("worker: handler: returning response subscribe id");
                 Ok(Signal::from(Response::Subscribe(id)))
             } else {
                 Err(Error::Other(
@@ -1093,12 +1135,9 @@ async fn handle_request(
             Ok(Signal::new(Response::Empty, ctx))
         }
         Request::ProcessQuery(query) => {
-            let mut ctx = ctx.ok_or(Error::ContextRequired(
-                "Worker cannot process query without signal context".to_string(),
-            ))?;
             let product = process_query(query, manager, &mut ctx).await?;
             trace!("worker: query: product: {:?}", product);
-            Ok(Signal::new(Response::Query(product), Some(ctx)))
+            Ok(Signal::new(Response::Query(product), ctx))
         }
         Request::SetBlocking(blocking) => {
             manager.set_blocked_watch(blocking).await?;
@@ -1106,8 +1145,8 @@ async fn handle_request(
             Ok(Signal::new(Response::Empty, ctx))
         }
         Request::TakeEntity(name, mut entity) => {
-            println!(
-                "worker[{}]: take entity: {}, {:?}, signal ctx: {:?}",
+            trace!(
+                "worker[{}]: take entity: {}, {:?}, ctx: {:?}",
                 manager.get_id().await?,
                 name,
                 entity,
@@ -1162,11 +1201,22 @@ async fn handle_request(
             // Global invocation requires broadcasting the request accross the
             // cluster to all the workers.
             if global {
-                // ctx.unwrap().worker_hop_count()
-                // manager.broadcast()
-            }
-            // Local invocation can happen right away.
-            else if !global {
+                // println!(
+                //     "worker {:?}: broadcasting invoke: ctx: {:?}",
+                //     manager.get_id().await?,
+                //     ctx
+                // );
+
+                let signal = Signal::new(
+                    Request::Invoke {
+                        events: events.clone(),
+                        global,
+                    },
+                    ctx.clone(),
+                );
+
+                // TODO: confirm the responses are correct (empty).
+                let _responses = broadcast(signal, &manager, &mut ctx).await?;
             }
 
             // Broadcast events to unsynced behaviors
@@ -1202,7 +1252,6 @@ async fn handle_request(
             for handle in behavior_handles {
                 for event in &events {
                     if handle.triggers.contains(&event) {
-                        // println!("triggering {event} for behavior handle");
                         // TODO: take into consideration behavior-level triggers' filter
                         let resp = handle
                             .execute(Signal::new(
@@ -1219,14 +1268,14 @@ async fn handle_request(
             for event in events {
                 let subs = manager.get_subscriptions().await?;
                 for sub in subs {
-                    println!("event: {}, sub: {:?}", event, sub);
+                    // println!("event: {}, sub: {:?}", event, sub);
                     for trigger in &sub.triggers {
                         if let Trigger::Event(event) = trigger {
                             continue;
                         }
                     }
 
-                    let mut ctx_ = ctx.clone().ok_or(Error::ContextRequired(format!("")))?;
+                    let mut ctx_ = ctx.clone();
                     let manager_ = manager.clone();
                     let query = sub.query.clone();
 
@@ -1239,7 +1288,7 @@ async fn handle_request(
                     .unwrap()?;
 
                     sub.sender
-                        .send(Ok(Signal::new(Response::Query(product), Some(ctx))))
+                        .send(Ok(Signal::new(Response::Query(product), ctx)))
                         .await;
                 }
             }
@@ -1369,10 +1418,10 @@ async fn handle_request(
                     // Prevent a single entity getting moved multiple times
                     // during a single migration process.
                     if let Some(cooldown_secs) = config.entity_migration_cooldown_secs {
-                        println!("last moved: {:?}", entity.meta.last_moved);
+                        // trace!("last moved: {:?}", entity.meta.last_moved);
                         if let Some(last_moved) = entity.meta.last_moved {
                             if Utc::now().timestamp() as u32 - last_moved <= cooldown_secs as u32 {
-                                println!("cooldown not ready");
+                                // println!("cooldown not ready");
                                 continue;
                             }
                         }
@@ -1385,13 +1434,11 @@ async fn handle_request(
                         let leader = manager.get_leader().await?;
                         if let LeaderSituation::Connected(exec) = leader.situation {
                             exec.execute(Signal::new(
-                                rpc::leader::Request::WorkerProxy(Box::new(Request::TakeEntity(
-                                    entity_name.clone(),
-                                    entity,
-                                ))),
-                                ctx.clone().or(Some(rpc::Context::new(
-                                    Participant::Worker(manager.get_id().await?).into(),
-                                ))),
+                                rpc::leader::Request::WorkerProxy(
+                                    Box::new(Request::TakeEntity(entity_name.clone(), entity)),
+                                    None,
+                                ),
+                                ctx.clone(),
                             ))
                             .await?;
                         }
@@ -1433,19 +1480,12 @@ async fn handle_request(
         }
         Request::LeaderProxy(request) => {
             let my_id = manager.get_id().await?;
-            let ctx = ctx.map(|c| c.register_hop(Participant::Worker(my_id)));
-            let response = send_to_leader(
-                *request,
-                manager,
-                ctx.unwrap_or(rpc::Context::new(Participant::Worker(my_id).into())),
-            )
-            .await?;
-            let ctx = response
-                .ctx
-                .map(|c| c.register_hop(Participant::Worker(my_id)));
+            // let ctx = ctx.register_hop(Participant::Worker(my_id));
+            let response = send_to_leader(*request, manager, ctx).await?;
+            // let ctx = response.ctx.register_hop(Participant::Worker(my_id));
             Ok(Signal::new(
                 Response::LeaderProxy(Box::new(response.payload)),
-                ctx,
+                response.ctx,
             ))
         }
         #[cfg(feature = "machine")]
@@ -1497,33 +1537,40 @@ async fn send_to_leader(
     manager: ManagerExec,
     ctx: rpc::Context,
 ) -> Result<Signal<rpc::leader::Response>> {
+    println!(
+        "worker {}: send to leader, ctx: {:?}",
+        manager.get_id().await?,
+        ctx
+    );
+
     // First determine leader situation.
     let leader = manager.get_leader().await?;
 
     match leader.situation {
         // If there is a direct connection, just use that.
-        LeaderSituation::Connected(exec) => exec.execute(Signal::new(request, Some(ctx))).await,
+        LeaderSituation::Connected(exec) => exec.execute(Signal::new(request, ctx)).await,
         // Otherwise attempt passing the request through connected workers.
         LeaderSituation::Aware(_) | LeaderSituation::Unaware => {
             let workers = manager.get_other_workers().await?;
             // TODO: select outbound worker based on actual measurements,
             // e.g. total time spent accessing the leader through the same
             // route previously.
-            if let Some((_, worker)) = workers.iter().next() {
-                let sig = worker
-                    .execute(Signal::new(
-                        Request::LeaderProxy(Box::new(request)),
-                        Some(ctx),
-                    ))
-                    .await?;
-                if let Response::LeaderProxy(response) = sig.payload {
-                    Ok(Signal::new(*response, sig.ctx))
-                } else {
-                    Err(Error::UnexpectedResponse(format!("")))
+            for (worker_id, worker) in workers {
+                if ctx.went_through_worker(&worker_id) {
+                    continue;
                 }
-            } else {
-                panic!("worker: other workers' list found empty, should've been catched elsewhere (worker orphaned)");
+
+                let sig = worker
+                    .execute(Signal::new(Request::LeaderProxy(Box::new(request)), ctx))
+                    .await?;
+
+                if let Response::LeaderProxy(response) = sig.payload {
+                    return Ok(Signal::new(*response, sig.ctx));
+                } else {
+                    return Err(Error::UnexpectedResponse(format!("")));
+                }
             }
+            panic!("worker: no suitable other workers");
         }
         // If the leader is not reachable, just return an error.
         LeaderSituation::Unreachable
@@ -1537,15 +1584,83 @@ async fn send_to_leader(
     }
 }
 
-/// Broadcasts a request to all known participants.
 async fn broadcast(
-    request: Request,
-    manager: ManagerExec,
-    mut ctx: &mut rpc::Context,
-) -> Result<()> {
-    let workers = manager.get_other_workers().await?;
+    signal: Signal<Request>,
+    manager: &ManagerExec,
+    mut ctx_: &mut rpc::Context,
+) -> Result<Vec<Response>> {
+    // let mut responses = vec![];
+    // println!("ctx_: {:?}", ctx_);
+    let responses = Arc::new(Mutex::new(vec![]));
+    let ctx = Arc::new(Mutex::new(ctx_.clone()));
 
-    Ok(())
+    // Send to all directly connected workers.
+    let other_workers = manager.get_other_workers().await?;
+    // println!("other workers: {:?}", other_workers);
+
+    let mut set = JoinSet::new();
+
+    for (id, worker) in other_workers {
+        if !signal.ctx.went_through_worker(&id) {
+            if let WorkerSituation::Connected(exec) = worker.situation {
+                println!("worker: {}, other worker: {}", manager.get_id().await?, id);
+                let signal = signal.clone();
+                let ctx = ctx.clone();
+                let responses = responses.clone();
+                set.spawn(async move {
+                    match exec.execute(signal.clone()).await {
+                        Ok(sig) => {
+                            // println!("hops: {:?}", sig.ctx.hops);
+                            ctx.lock().await.merge_hops_unique(&sig.ctx.hops);
+                            responses.lock().await.push(sig.into_payload());
+                        }
+                        Err(e) => {
+                            println!("!!!! error: {}", e);
+                            // TODO: handle erroneous responses. If the other worker responds with
+                            // "signal seen" then we don't really need to handle it.
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    // Send to the leader so it can proxy to workers.
+    if !signal.ctx.went_through_leader() {
+        let leader = manager.get_leader().await?;
+        if let LeaderSituation::Connected(exec) = leader.situation {
+            let signal = Signal::new(
+                rpc::leader::Request::WorkerBroadcast(signal.payload),
+                signal.ctx,
+            );
+            let ctx = ctx.clone();
+            let responses = responses.clone();
+            set.spawn(async move {
+                match exec.execute(signal).await {
+                    Ok(response) => {
+                        if let Signal {
+                            payload: rpc::leader::Response::WorkerBroadcast(resps),
+                            ctx: ctx_,
+                            ..
+                        } = response
+                        {
+                            ctx.lock().await.merge_hops_unique(&ctx_.hops);
+                            responses.lock().await.extend(resps);
+                        }
+                    }
+                    Err(_) => {
+                        //
+                    }
+                }
+            });
+        }
+    }
+
+    let _ = set.join_all().await;
+
+    *ctx_ = Arc::try_unwrap(ctx).unwrap().into_inner();
+    let responses = Arc::try_unwrap(responses).unwrap().into_inner();
+    Ok(responses)
 }
 
 async fn process_query(
@@ -1589,10 +1704,11 @@ async fn process_query(
                 if let LeaderSituation::Connected(leader_exec) = leader.situation {
                     let response = leader_exec
                         .execute(Signal::new(
-                            rpc::leader::Request::WorkerProxy(Box::new(Request::ProcessQuery(
-                                query.clone(),
-                            ))),
-                            Some(ctx.clone()),
+                            rpc::leader::Request::WorkerProxy(
+                                Box::new(Request::ProcessQuery(query.clone())),
+                                None,
+                            ),
+                            ctx.clone(),
                         ))
                         .await?;
                     if let Signal {
@@ -1629,10 +1745,7 @@ async fn process_query(
                     let ctx_ = ctx.clone();
                     set.spawn(async move {
                         worker
-                            .execute(Signal::new(
-                                rpc::worker::Request::ProcessQuery(query),
-                                Some(ctx_),
-                            ))
+                            .execute(Signal::new(rpc::worker::Request::ProcessQuery(query), ctx_))
                             .await
                     });
                 }

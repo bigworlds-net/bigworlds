@@ -18,7 +18,7 @@ use crate::net::CompositeAddress;
 use crate::rpc::{Caller, Participant};
 use crate::server::ServerId;
 use crate::worker::part::Partition;
-use crate::worker::{Leader, LeaderSituation, Server, ServerExec, State};
+use crate::worker::{Leader, LeaderSituation, Server, ServerExec, State, WorkerSituation};
 use crate::{
     net, query, rpc, util, Address, EntityName, Error, Executor, Model, PrefabName, Query,
     QueryProduct, Result, Signal, Snapshot, Var,
@@ -31,10 +31,6 @@ pub type ManagerExec = LocalExec<Request, Result<Response>>;
 impl ManagerExec {
     pub async fn snapshot(&self) -> Result<Snapshot> {
         self.execute(Request::Snapshot).await??.try_into()
-    }
-
-    pub async fn broadcast(&self) -> Result<()> {
-        Ok(())
     }
 
     pub async fn get_id(&self) -> Result<WorkerId> {
@@ -380,42 +376,42 @@ pub fn spawn(mut worker: State, cancel: CancellationToken) -> Result<ManagerExec
     Ok(exec)
 }
 
-async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response> {
-    trace!("worker[{}]: manager: handling request: {req}", worker.id);
+async fn handle_request(req: Request, mut state: &mut State) -> Result<Response> {
+    trace!("worker[{}]: manager: handling request: {req}", state.id);
     match req {
-        Request::GetId => Ok(Response::GetId(worker.id)),
-        Request::GetConfig => Ok(Response::GetConfig(worker.config.clone())),
+        Request::GetId => Ok(Response::GetId(state.id)),
+        Request::GetConfig => Ok(Response::GetConfig(state.config.clone())),
         Request::PullConfig(config) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 part.config = config.partition.clone();
             }
-            worker.config = config;
+            state.config = config;
 
             Ok(Response::Empty)
         }
-        Request::GetLeader => Ok(Response::GetLeader(worker.leader.clone())),
+        Request::GetLeader => Ok(Response::GetLeader(state.leader.clone())),
         Request::SetLeader(leader) => {
-            worker.leader = leader;
+            state.leader = leader;
             Ok(Response::Empty)
         }
         Request::InsertServer(server_id, server) => {
-            worker.servers.insert(server_id, server);
+            state.servers.insert(server_id, server);
             Ok(Response::Empty)
         }
-        Request::GetBlockedWatch => Ok(Response::GetBlockedWatch(worker.blocked_watch.1.clone())),
+        Request::GetBlockedWatch => Ok(Response::GetBlockedWatch(state.blocked_watch.1.clone())),
         Request::SetBlockedWatch(value) => {
-            worker.blocked_watch.0.send(value);
+            state.blocked_watch.0.send(value);
             Ok(Response::Empty)
         }
-        Request::GetClockWatch => Ok(Response::GetClockWatch(worker.clock_watch.1.clone())),
+        Request::GetClockWatch => Ok(Response::GetClockWatch(state.clock_watch.1.clone())),
         Request::SetClockWatch(value) => {
             trace!("setting clock watch to {}", value);
-            worker.clock_watch.0.send(value);
+            state.clock_watch.0.send(value);
             Ok(Response::Empty)
         }
-        Request::GetServers => Ok(Response::GetServers(worker.servers.clone())),
+        Request::GetServers => Ok(Response::GetServers(state.servers.clone())),
         Request::GetEntity(name) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 if let Ok(entity) = part.get_entity(&name) {
                     Ok(Response::Entity(entity.to_owned()))
                 } else {
@@ -428,7 +424,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::GetEntities => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 let mut entities = part
                     .entities
                     .iter()
@@ -436,13 +432,13 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                     .collect::<Vec<EntityName>>();
 
                 // TODO: include archived entities conditionally.
-                entities.extend(
-                    part.archive
-                        .as_ref()
-                        .ok_or(Error::ArchiveDisabled)?
-                        .iter()
-                        .map(|k| EntityName::from_utf8(k.unwrap().0.to_vec()).unwrap()),
-                );
+                if let Some(archive) = &part.archive {
+                    entities.extend(
+                        archive
+                            .iter()
+                            .map(|k| EntityName::from_utf8(k.unwrap().0.to_vec()).unwrap()),
+                    );
+                }
 
                 Ok(Response::Entities(entities))
             } else {
@@ -452,7 +448,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::GetSyncedBehaviorHandles => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 Ok(Response::GetSyncedBehaviorHandles(part.behaviors.clone()))
             } else {
                 Err(Error::WorkerNotInitialized(
@@ -461,7 +457,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::GetUnsyncedBehaviorTx => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 Ok(Response::GetUnsyncedBehaviorTx(
                     part.behavior_broadcast.0.clone(),
                 ))
@@ -473,7 +469,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
         }
         #[cfg(feature = "machine")]
         Request::GetMachineHandles => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 Ok(Response::GetMachineHandles(part.machines.clone()))
             } else {
                 Err(Error::WorkerNotInitialized(
@@ -482,7 +478,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::MemorySize => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 unimplemented!();
             } else {
                 Err(Error::LeaderNotInitialized(format!(
@@ -495,7 +491,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             // snd.send(Response::Clock(worker.clock));
         }
         Request::ProcessQuery(query) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 // let now = std::time::Instant::now();
                 let product = crate::query::process_query(&query, part).await?;
                 // println!("processed query: elapsed: {}ms", now.elapsed().as_millis());
@@ -512,7 +508,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             sender,
         } => {
             let id = Uuid::new_v4();
-            worker.subscriptions.push(super::Subscription {
+            state.subscriptions.push(super::Subscription {
                 id,
                 triggers,
                 query,
@@ -525,38 +521,38 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             // sub.sender.is_closed()
             // drop(sub.sender);
             // }
-            worker.subscriptions.retain(|sub| sub.id != id);
+            state.subscriptions.retain(|sub| sub.id != id);
             Ok(Response::Empty)
         }
-        Request::GetSubscriptions => Ok(Response::Subscriptions(worker.subscriptions.clone())),
+        Request::GetSubscriptions => Ok(Response::Subscriptions(state.subscriptions.clone())),
         Request::GetModel => {
-            if let Some(model) = &worker.model {
+            if let Some(model) = &state.model {
                 Ok(Response::Model(model.clone()))
             } else {
                 Err(Error::WorkerNotInitialized(format!("model is not set")))
             }
         }
         Request::SetModel(model) => {
-            worker.model = Some(model);
+            state.model = Some(model);
             Ok(Response::Empty)
         }
         Request::Initialize(behavior_exec) => {
-            if let Some(model) = &worker.model {
+            if let Some(model) = &state.model {
                 // HACK: we use replace semantics since the broadcast channel
                 // is stored on the partition. It's still not clear, but
                 // perhaps the channel should live higher up on the worker
                 // state instead.
-                let old_part = worker.part.replace(
+                let old_part = state.part.replace(
                     Partition::from_model(
                         model,
                         behavior_exec,
-                        worker.config.partition.clone(),
-                        worker.id,
+                        state.config.partition.clone(),
+                        state.id,
                     )
                     .await?,
                 );
                 if let Some(old_part) = old_part {
-                    worker.part.as_mut().unwrap().behavior_broadcast = old_part.behavior_broadcast;
+                    state.part.as_mut().unwrap().behavior_broadcast = old_part.behavior_broadcast;
                 }
 
                 Ok(Response::Empty)
@@ -576,7 +572,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             // Ok(Response::MachineHandle(handle))
         }
         Request::Shutdown => {
-            if let Some(part) = &worker.part {
+            if let Some(part) = &state.part {
                 log::trace!("manager sending shutdown to behavior tasks");
                 part.behavior_broadcast
                     .0
@@ -596,12 +592,12 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 }
 
                 // Let the leader know we're shutting down.
-                if let LeaderSituation::Connected(leader) = &worker.leader.situation {
+                if let LeaderSituation::Connected(leader) = &state.leader.situation {
                     // println!(">>> letting leader know we're shutting down the worker");
                     leader
                         .execute(
                             Signal::from(rpc::leader::Request::DisconnectWorker)
-                                .originating_at(Participant::Worker(worker.id).into()),
+                                .originating_at(Participant::Worker(state.id).into()),
                         )
                         .await?;
                 }
@@ -614,8 +610,8 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::AddEntity(name, entity) => {
-            if let Some(model) = &worker.model {
-                if let Some(ref mut part) = worker.part {
+            if let Some(model) = &state.model {
+                if let Some(ref mut part) = state.part {
                     part.add_entity(name, entity, model)?;
                     Ok(Response::Empty)
                 } else {
@@ -630,8 +626,8 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::SpawnEntity(name, prefab) => {
-            if let Some(model) = &worker.model {
-                if let Some(ref mut part) = worker.part {
+            if let Some(model) = &state.model {
+                if let Some(ref mut part) = state.part {
                     part.spawn_entity(name, &prefab, &Default::default(), model)?;
                     Ok(Response::Empty)
                 } else {
@@ -646,7 +642,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::RemoveEntity(name) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 part.remove_entity(name.clone())?;
                 Ok(Response::Empty)
             } else {
@@ -655,16 +651,16 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
                 )))
             }
         }
-        Request::GetOtherWorkers => Ok(Response::GetOtherWorkers(worker.other_workers.clone())),
+        Request::GetOtherWorkers => Ok(Response::GetOtherWorkers(state.other_workers.clone())),
         Request::AddOtherWorker(other_worker) => {
-            worker.other_workers.insert(other_worker.id, other_worker);
+            state.other_workers.insert(other_worker.id, other_worker);
             Ok(Response::Empty)
         }
-        Request::GetListeners => Ok(Response::GetListeners(worker.listeners.clone())),
+        Request::GetListeners => Ok(Response::GetListeners(state.listeners.clone())),
         Request::SetVars(pairs) => {
             // TODO: expand to possibly set data on remote worker.
             for (address, var) in pairs {
-                if let Some(part) = &mut worker.part {
+                if let Some(part) = &mut state.part {
                     if let Some(entity) = part.entities.get_mut(&address.entity) {
                         entity
                             .storage
@@ -689,7 +685,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             Ok(Response::Empty)
         }
         Request::GetVar(address) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 if let Ok(entity) = part.get_entity(&address.entity) {
                     Ok(Response::GetVar(
                         entity.storage.get_var(&address.storage_index())?.clone(),
@@ -702,7 +698,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::AddBehavior(target, handle) => {
-            if let Some(part) = &mut worker.part {
+            if let Some(part) = &mut state.part {
                 part.behaviors
                     .entry(target)
                     // TODO: can we omit cloning here while still using the
@@ -715,7 +711,7 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             }
         }
         Request::Snapshot => {
-            let entities = if let Some(partition) = &worker.part {
+            let entities = if let Some(partition) = &state.part {
                 partition
                     .entities
                     .iter()
@@ -728,8 +724,8 @@ async fn handle_request(req: Request, mut worker: &mut State) -> Result<Response
             let snap = Snapshot {
                 created_at: chrono::Utc::now().timestamp() as u32,
                 worker_count: 1,
-                clock: *worker.clock_watch.1.borrow(),
-                model: worker.model.clone().unwrap_or(Model::default()),
+                clock: *state.clock_watch.1.borrow(),
+                model: state.model.clone().unwrap_or(Model::default()),
                 entities,
             };
 
