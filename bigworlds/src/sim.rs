@@ -82,9 +82,7 @@ pub async fn spawn_with(config: SimConfig, cancel: CancellationToken) -> Result<
     let mut leader_handle = leader::spawn(config.leader.clone(), cancel.clone())?;
 
     // Spawn worker tasks.
-    // TODO: enable worker to worker connections, targetting a mesh topology.
-    // Currently we only support star topology where all workers are connected
-    // only to the leader.
+    // TODO: paralellize.
     let mut workers = FnvHashMap::default();
     for _ in 0..config.worker_count {
         let worker_handle = worker::spawn(config.worker.clone(), cancel.clone())?;

@@ -3,6 +3,7 @@
 use bigworlds::time::Instant;
 use bigworlds::{query, rpc, Executor, Query, Signal};
 
+#[allow(unused)]
 mod common {
     include!("../tests/common/mod.rs");
 }

@@ -236,7 +236,7 @@ impl GrpcClient {
                     Err(e) => Err(format!("Failed to create client: {}", e)),
                 }
             });
-            self.status_promise = Some(promise);
+            self.connect_promise = Some(promise);
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -298,6 +298,14 @@ impl GrpcClient {
 
         let client = WorldsClient::new(channel);
         Ok(client)
+    }
+
+    pub fn disconnect(&mut self) {
+        log::info!("Disconnecting gRPC client");
+        self.status = ConnectionStatus::Disconnected;
+        self.client = None;
+        self.url = None;
+        self.connect_promise = None;
     }
 
     pub fn update(&mut self) {
@@ -407,7 +415,7 @@ impl GrpcClient {
                                 
                                 // Try a simple query to check if the service is ready
                                 let query = Query {
-                                    description: protoworlds::Description::None as i32,
+                                    description: protoworlds::Description::Addressed as i32,
                                     layout: protoworlds::Layout::Var as i32,
                                     filters: vec![],
                                     mappings: vec![protoworlds::Map {

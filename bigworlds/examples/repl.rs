@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use bigworlds::machine::{cmd, script, LocationInfo};
 use bigworlds::sim::{self, SimConfig};
 
+#[allow(unused)]
 mod common {
     include!("../tests/common/mod.rs");
 }

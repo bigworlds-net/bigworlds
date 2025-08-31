@@ -520,7 +520,7 @@ pub async fn process_query(
         _ => unimplemented!(),
     }
 
-    println!("query_product: {:?}", query_product);
+    // println!("query_product: {:?}", query_product);
     trace!("query time (product): {}ms", now.elapsed().as_millis());
 
     Ok(query_product)
