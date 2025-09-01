@@ -274,6 +274,8 @@ pub async fn start(
                             // List variables.
                             // TODO: make this more useful by supporting basic
                             // globbing and such.
+                            // TODO: consider limiting the number of results by
+                            // default.
                             "ls" | "l" => {
                                 let mut query = bigworlds::Query::default()
                                     // Explicitly request entities from all workers
@@ -283,12 +285,10 @@ pub async fn start(
 
                                 // HACK: filter output by single entity name
                                 if !args.is_empty() {
-                                    println!("filtering by name: {args}");
                                     query =
                                         query.filter(query::Filter::Name(vec![args.to_owned()]));
                                 }
 
-                                println!("executing query: {:?}", query);
                                 let product = client.query(query).await?;
 
                                 for (addr, var) in product.to_map()? {

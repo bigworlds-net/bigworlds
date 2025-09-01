@@ -4,7 +4,6 @@ use futures::future::BoxFuture;
 
 use bigworlds::{
     Signal,
-    string,
     Address, Executor, LocalExec, Query, QueryProduct, Result, Var, query,
     rpc::{
         self,
@@ -28,8 +27,8 @@ pub fn main(
             // Spawn a cube from prefab.
             let _ = worker
                 .execute(Signal::from(rpc::worker::Request::SpawnEntity {
-                    name: string::new_truncate(&format!("cube_{n}")),
-                    prefab: Some(string::new_truncate("cube")),
+                    name: format!("cube_{n}"),
+                    prefab: Some("cube".to_owned()),
                 }))
                 .await??;
 
@@ -54,10 +53,6 @@ pub fn main(
             match events.next().await {
                 Some((sig, snd)) => {
                     match sig.payload {
-                        Request::Subscription(name, product) => {
-                            println!("got query subscription product");
-                            snd.send(Ok(Signal::new(Response::Empty, sig.ctx)));
-                        }
                         Request::Event(event) => match event.as_str() {
                             "step" => {
                                 // println!("behavior: event `never`");
