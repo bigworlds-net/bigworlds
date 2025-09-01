@@ -6,7 +6,8 @@ Dynamically scalable virtual worlds.
 [![Static Badge](https://img.shields.io/badge/built_with-Rust-dca282)]()
 [![Static Badge](https://img.shields.io/badge/discord-server-blue)](https://discord.gg/SHQ3rYvn3B)
 
-A novel general-purpose framework for assembling and running large simulations.
+A novel general-purpose framework for assembling and running large agent-based
+simulations.
 
 With potential applications ranging from games to business intelligence, it is
 an attempt to solve the problem of efficient horizontal scaling for systems
@@ -178,9 +179,9 @@ multiple ways for providing data and composing logic.
 
 With the whole system being designed around distributed storage, retrieval
 times are the biggest limitation of the system. While it's also built with
-dynamic migration based on access patterns, given how physics works, this will
-always be slower than localized systems optimized in line with hardware
-specification.
+dynamic migration based on access patterns in mind, given how physics works,
+this will always be slower than localized systems optimized in line with
+hardware specification.
 
 Data storage is implemented in a way that optimizes for entity-level retrieval
 and transfer between nodes. This leads to a trade-off when considering entity
